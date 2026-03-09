@@ -1,697 +1,415 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  Footprints, Moon, Briefcase, Smartphone, 
-  Dog, Dumbbell, BookOpen, HeartHandshake, Utensils,
-  Brain, CheckCircle2, Save, 
-  Frown, Meh, Smile, Laugh, BatteryWarning,
-  Flame, Coffee, AlertCircle, CalendarDays, TrendingUp, Zap,
-  Droplets, BookA, Info, Users, Heart, Star, Activity,
-  Lightbulb, Target, Calendar
-} from 'lucide-react';
-
-// --- IMPORTS DE FIREBASE ---
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, onSnapshot } from 'firebase/firestore';
-
-// --- TU CONFIGURACIÓN REAL DE FIREBASE (habitos-guada) ---
-const firebaseConfig = {
-  apiKey: "AIzaSyAkhWpZAD7dsO2e3lo47q_IkI_C3cwKvw0",
-  authDomain: "habitos-guada.firebaseapp.com",
-  projectId: "habitos-guada",
-  storageBucket: "habitos-guada.firebasestorage.app",
-  messagingSenderId: "151671576862",
-  appId: "1:151671576862:web:54a60bf332537b683a110f",
-  measurementId: "G-2QNG8Y123J"
-};
-
-// Inicializamos los servicios de Firebase
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-
-const App = () => {
-  // --- ESTADOS DE LA APP ---
-  const [user, setUser] = useState(null);
-  const [activeTab, setActiveTab] = useState('daily');
-  const [date] = useState(new Date().toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
-  const [saved, setSaved] = useState(false);
-  const [historicalData, setHistoricalData] = useState([]);
-
-  // Estados de carga
-  const [loadingAuth, setLoadingAuth] = useState(true);
-
-  // Objetivos Mensuales
-  const [monthlyGoals, setMonthlyGoals] = useState([
-    { id: 1, habitKey: '', targetDays: '' },
-    { id: 2, habitKey: '', targetDays: '' },
-    { id: 3, habitKey: '', targetDays: '' }
-  ]);
-
-  const habitLabels = {
-    gym: 'Gimnasia', recreation: 'Recreación', enzo: 'Pasear a Enzo', 
-    inform: 'Informarme', learn: 'Aprender algo', friends: 'Amigos/Familia', nico: 'Tiempo con Nico'
-  };
-
-  // Datos Diarios
-  const [habits, setHabits] = useState({ gym: false, recreation: false, enzo: false, inform: false, learn: false, friends: false, nico: false });
-  const [ratings, setRatings] = useState({ sleep: 0, food: 0, water: 0, work: 0, phone: 0 });
-  const [steps, setSteps] = useState('');
-  const [cycleDay, setCycleDay] = useState('');
-  const [mood, setMood] = useState(null);
-  const [physicalState, setPhysicalState] = useState([]);
-
-  // --- 1. EFECTO: AUTENTICACIÓN (Inicio de sesión anónimo) ---
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        await signInAnonymously(auth);
-      } catch (err) {
-        console.error("Error de autenticación:", err);
-      }
-    };
-    initAuth();
-
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setLoadingAuth(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // --- 2. EFECTO: OBTENER DATOS DE FIREBASE ---
-  useEffect(() => {
-    if (!user) return;
-
-    // A. Escuchar Historial Diario de este usuario
-    const logsRef = collection(db, 'users', user.uid, 'daily_logs');
-    const unsubLogs = onSnapshot(logsRef, (snapshot) => {
-      const logs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // Ordenamos del más nuevo al más viejo
-      logs.sort((a, b) => new Date(b.date) - new Date(a.date));
-      setHistoricalData(logs);
-    }, (err) => console.error("Error cargando historial:", err));
-
-    // B. Escuchar Objetivos Mensuales de este usuario
-    const goalsRef = doc(db, 'users', user.uid, 'settings', 'goals');
-    const unsubGoals = onSnapshot(goalsRef, (docSnap) => {
-      if (docSnap.exists() && docSnap.data().goals) {
-        setMonthlyGoals(docSnap.data().goals);
-      }
-    }, (err) => console.error("Error cargando objetivos:", err));
-
-    return () => {
-      unsubLogs();
-      unsubGoals();
-    };
-  }, [user]);
-
-  // --- 3. EFECTO: AUTO-CARGAR EL DÍA DE HOY ---
-  useEffect(() => {
-    const d = new Date();
-    const todayStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const todayEntry = historicalData.find(entry => entry.id === todayStr);
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mi Energía Diaria</title>
     
-    if (todayEntry) {
-      setHabits(todayEntry.habits || { gym: false, recreation: false, enzo: false, inform: false, learn: false, friends: false, nico: false });
-      setRatings(todayEntry.ratings || { sleep: 0, food: 0, water: 0, work: 0, phone: 0 });
-      setSteps(todayEntry.steps || '');
-      setCycleDay(todayEntry.cycleDay || '');
-      setMood(todayEntry.mood || null);
-      setPhysicalState(todayEntry.physicalState || []);
-    }
-  }, [historicalData]);
-
-  // --- ETIQUETAS FÍSICAS ---
-  const physicalTags = [
-    { label: 'Llena de energía', icon: <Zap size={14} />, type: 'positive' },
-    { label: 'Liviana / Fuerte', icon: <Dumbbell size={14} />, type: 'positive' },
-    { label: 'Descansada', icon: <Coffee size={14} />, type: 'positive' },
-    { label: 'Inspirada', icon: <Flame size={14} />, type: 'positive' },
-    { label: 'Cansada', icon: <BatteryWarning size={14} />, type: 'negative' },
-    { label: 'Dolorida', icon: <AlertCircle size={14} />, type: 'negative' },
-    { label: 'Con Hambre', icon: <Utensils size={14} />, type: 'negative' },
-    { label: 'Mal humorada', icon: <Frown size={14} />, type: 'negative' },
-    { label: 'Dolor de cabeza', icon: <Brain size={14} />, type: 'negative' },
-    { label: 'Dolor de panza', icon: <Activity size={14} />, type: 'negative' },
-    { label: 'Pesada', icon: <Footprints size={14} />, type: 'negative' },
-  ];
-
-  const moodOptions = [
-    { value: 'terrible', icon: <Frown size={28} />, color: 'text-rose-500 bg-rose-100', label: 'Malo' },
-    { value: 'meh', icon: <Meh size={28} />, color: 'text-amber-500 bg-amber-100', label: 'Regular' },
-    { value: 'good', icon: <Smile size={28} />, color: 'text-emerald-500 bg-emerald-100', label: 'Bueno' },
-    { value: 'great', icon: <Laugh size={28} />, color: 'text-teal-500 bg-teal-100', label: 'Excelente' },
-  ];
-
-  // --- CÁLCULO DE PUNTUACIÓN DIARIA ---
-  const dailyScore = useMemo(() => {
-    let score = 0;
-    const habitsCompleted = Object.values(habits).filter(Boolean).length;
-    score += habitsCompleted * 5;
-
-    const ratingsSum = Object.values(ratings).reduce((acc, curr) => acc + (curr * 2), 0);
-    score += ratingsSum;
-
-    const stepsNum = Number(steps);
-    if (stepsNum >= 8000) score += 15;
-    else if (stepsNum >= 5000) score += 7;
-
-    return Math.min(100, score);
-  }, [habits, ratings, steps]);
-
-  // --- HANDLERS ---
-  const toggleHabit = (key) => setHabits({ ...habits, [key]: !habits[key] });
-  const setRating = (key, value) => setRatings({ ...ratings, [key]: value });
-  
-  const togglePhysicalState = (tag) => {
-    if (physicalState.includes(tag)) setPhysicalState(physicalState.filter(t => t !== tag));
-    else setPhysicalState([...physicalState, tag]);
-  };
-
-  const updateGoal = async (id, field, value) => {
-    const newGoals = monthlyGoals.map(g => g.id === id ? { ...g, [field]: value } : g);
-    setMonthlyGoals(newGoals);
+    <!-- Tailwind CSS para el diseño -->
+    <script src="https://cdn.tailwindcss.com"></script>
     
-    // Guardar objetivos en Firebase
-    if (user) {
-      const goalsRef = doc(db, 'users', user.uid, 'settings', 'goals');
-      try {
-        await setDoc(goalsRef, { goals: newGoals });
-      } catch (err) {
-        console.error("Error guardando objetivos:", err);
-      }
-    }
-  };
-
-  const handleSave = async () => {
-    if (!user) return;
-    setSaved(true);
+    <!-- Íconos (Phosphor Icons - Funcionan nativo en HTML) -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
     
-    // Usamos YYYY-MM-DD como ID del documento
-    const d = new Date();
-    const todayStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    <!-- Librerías de React -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     
-    const newEntry = {
-      date: d.toISOString(),
-      score: dailyScore,
-      habits,
-      ratings,
-      steps,
-      cycleDay,
-      mood: mood || 'meh',
-      physicalState
-    };
+    <!-- Babel (Procesa el código de React en el navegador) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    try {
-      const logsRef = collection(db, 'users', user.uid, 'daily_logs');
-      await setDoc(doc(logsRef, todayStr), newEntry);
-    } catch (err) {
-      console.error("Error al guardar el día:", err);
-    }
-
-    setTimeout(() => setSaved(false), 2000);
-  };
-
-  // --- VISTAS ---
-  if (loadingAuth) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-orange-50 text-orange-600 font-bold">
-        <Activity className="animate-pulse mr-2" />
-        Conectando con tu base de datos...
-      </div>
-    );
-  }
-
-  const renderDailyTab = () => (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      
-      {/* PUNTUACIÓN EN VIVO */}
-      <div className="bg-gradient-to-r from-orange-400 to-rose-400 p-6 rounded-3xl shadow-lg shadow-orange-200 text-white flex justify-between items-center">
-        <div>
-          <h2 className="text-xl font-bold flex items-center gap-2 mb-1">
-            <Activity size={24} className="text-orange-100" />
-            Tu puntuación de hoy
-          </h2>
-          <p className="text-orange-50 text-sm">Base 100 pts. Se calcula automáticamente.</p>
-        </div>
-        <div className="text-5xl font-black">{dailyScore}</div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* COLUMNA IZQUIERDA: Hábitos y Escalas */}
-        <div className="space-y-6">
-          
-          {/* Hábitos SÍ/NO */}
-          <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
-            <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-              <CheckCircle2 className="text-emerald-500" size={20} />
-              Acciones del Día (Sí/No)
-            </h2>
-            <div className="flex flex-col gap-2">
-              <HabitButton active={habits.gym} onClick={() => toggleHabit('gym')} icon={<Dumbbell size={16}/>} label="Gimnasia" color="emerald" />
-              <HabitButton active={habits.recreation} onClick={() => toggleHabit('recreation')} icon={<BookOpen size={16}/>} label="Recreación (Leer/Serie)" color="purple" />
-              <HabitButton active={habits.enzo} onClick={() => toggleHabit('enzo')} icon={<Dog size={16}/>} label="Pasear a Enzo" color="amber" />
-              <HabitButton active={habits.inform} onClick={() => toggleHabit('inform')} icon={<Info size={16}/>} label="Informarme" color="blue" />
-              <HabitButton active={habits.learn} onClick={() => toggleHabit('learn')} icon={<BookA size={16}/>} label="Aprender algo (Proyecto/Tesis)" color="indigo" />
-              <HabitButton active={habits.friends} onClick={() => toggleHabit('friends')} icon={<Users size={16}/>} label="Tiempo para amigos/familia" color="rose" />
-              <HabitButton active={habits.nico} onClick={() => toggleHabit('nico')} icon={<Heart size={16}/>} label="Tiempo con Nico" color="rose" />
-            </div>
-          </div>
-
-          {/* Pasos y Ciclo */}
-          <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100 grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-bold text-slate-600 flex items-center gap-2 mb-2">
-                <Footprints size={16} className="text-orange-500"/> Pasos Diarios
-              </label>
-              <input 
-                type="number" value={steps} onChange={e => setSteps(e.target.value)} placeholder="Ej: 8500"
-                className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl text-lg font-bold outline-none focus:border-purple-400 focus:bg-white transition-all"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-bold text-slate-600 flex items-center gap-2 mb-2">
-                <Calendar size={16} className="text-rose-400"/> Día del Ciclo
-              </label>
-              <input 
-                type="number" value={cycleDay} onChange={e => setCycleDay(e.target.value)} placeholder="Ej: 14"
-                className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl text-lg font-bold outline-none focus:border-purple-400 focus:bg-white transition-all"
-              />
-            </div>
-          </div>
-
-        </div>
-
-        {/* COLUMNA DERECHA: Puntuaciones y Estado */}
-        <div className="space-y-6">
-          
-          {/* Evaluaciones 1 al 5 */}
-          <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
-            <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-              <Star className="text-amber-400" size={20} />
-              ¿Cómo lo calificarías hoy? (1 al 5)
-            </h2>
-            <div className="space-y-4">
-              <RatingRow label="Sueño" value={ratings.sleep} onChange={(v) => setRating('sleep', v)} icon={<Moon size={16} className="text-indigo-500"/>} />
-              <RatingRow label="Comida" value={ratings.food} onChange={(v) => setRating('food', v)} icon={<Utensils size={16} className="text-orange-500"/>} />
-              <RatingRow label="Agua" value={ratings.water} onChange={(v) => setRating('water', v)} icon={<Droplets size={16} className="text-blue-500"/>} />
-              <RatingRow label="Trabajo" value={ratings.work} onChange={(v) => setRating('work', v)} icon={<Briefcase size={16} className="text-slate-500"/>} />
-              <RatingRow label="Relación con Celular" value={ratings.phone} onChange={(v) => setRating('phone', v)} icon={<Smartphone size={16} className="text-rose-500"/>} />
-            </div>
-          </div>
-
-          {/* Bienestar Múltiple */}
-          <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
-            <h2 className="text-lg font-bold text-slate-700 mb-4 flex items-center gap-2">
-              <Brain className="text-purple-500" size={20} />
-              ¿Cómo te sentís?
-            </h2>
-            
-            {/* Ánimo Principal */}
-            <div className="flex justify-between mb-5 bg-stone-50 p-2 rounded-2xl">
-              {moodOptions.map(m => (
-                <button
-                  key={m.value}
-                  onClick={() => setMood(m.value)}
-                  className={`p-3 flex-1 flex flex-col items-center gap-1 rounded-xl transition-all ${
-                    mood === m.value ? `${m.color} scale-105 shadow-md` : 'text-stone-400 hover:bg-stone-100'
-                  }`}
-                >
-                  {m.icon}
-                  <span className="text-[10px] font-bold uppercase tracking-wide">{m.label}</span>
-                </button>
-              ))}
-            </div>
-
-            {/* Etiquetas Físicas (Múltiple) */}
-            <div>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-3">Sensaciones físicas y mentales (Selecciona varias)</p>
-              <div className="flex flex-wrap gap-2">
-                {physicalTags.map((tag) => {
-                  const isActive = physicalState.includes(tag.label);
-                  const activeClass = tag.type === 'positive' 
-                    ? 'bg-emerald-100 border-emerald-300 text-emerald-800' 
-                    : 'bg-rose-100 border-rose-300 text-rose-800';
-                  
-                  return (
-                    <button
-                      key={tag.label}
-                      onClick={() => togglePhysicalState(tag.label)}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-semibold transition-all border ${
-                        isActive ? activeClass : 'bg-white border-stone-200 text-stone-500 hover:border-purple-300 shadow-sm'
-                      }`}
-                    >
-                      {tag.icon} {tag.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderMonthlyTab = () => {
-    // Solo tomamos los días del mes actual para el dashboard
-    const currentMonth = new Date().getMonth();
-    const currentYear = new Date().getFullYear();
-    const thisMonthData = historicalData.filter(d => {
-      const dateObj = new Date(d.date);
-      return dateObj.getMonth() === currentMonth && dateObj.getFullYear() === currentYear;
-    });
-
-    // Cálculos para el Dashboard
-    const totalDays = thisMonthData.length;
-    const avgScore = totalDays > 0 ? Math.round(thisMonthData.reduce((acc, curr) => acc + curr.score, 0) / totalDays) : 0;
+    <style>
+        body { font-family: 'Nunito', sans-serif; }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-amber-50 via-orange-50 to-rose-50 min-h-screen text-slate-800">
     
-    // Calcular frecuencias de hábitos
-    const habitCounts = { gym: 0, recreation: 0, enzo: 0, inform: 0, learn: 0, friends: 0, nico: 0 };
-    thisMonthData.forEach(day => {
-      Object.keys(habitCounts).forEach(h => { if(day.habits && day.habits[h]) habitCounts[h]++; });
-    });
-    
-    const habitPercentages = Object.keys(habitCounts).map(key => ({
-      key,
-      label: habitLabels[key],
-      percent: totalDays > 0 ? Math.round((habitCounts[key] / totalDays) * 100) : 0
-    })).sort((a,b) => b.percent - a.percent);
+    <!-- Aquí se cargará la app -->
+    <div id="root"></div>
 
-    // Calcular frecuencias de sensaciones
-    const sensationCounts = {};
-    thisMonthData.forEach(day => {
-      if(day.physicalState) {
-        day.physicalState.forEach(tag => {
-          sensationCounts[tag] = (sensationCounts[tag] || 0) + 1;
-        });
-      }
-    });
-    const sortedSensations = Object.entries(sensationCounts).sort((a, b) => b[1] - a[1]);
+    <script type="text/babel" data-type="module">
+        // --- 1. IMPORTACIONES DE FIREBASE ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-    const bestHabit = habitPercentages.length > 0 && totalDays > 0 ? habitPercentages[0].label : 'No hay datos suficientes.';
-    const worstHabit = habitPercentages.length > 0 && totalDays > 0 ? habitPercentages[habitPercentages.length - 1].label : 'No hay datos suficientes.';
+        const { useState, useEffect, useMemo } = React;
 
-    return (
-      <div className="space-y-6 animate-in fade-in duration-500">
-        
-        {/* MIS 3 OBJETIVOS DEL MES */}
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-orange-100">
-          <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
-            <Target className="text-orange-500" size={24}/> Mis 3 Objetivos del Mes
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {monthlyGoals.map((goal, index) => {
-              const currentProgress = goal.habitKey ? thisMonthData.filter(d => d.habits && d.habits[goal.habitKey]).length : 0;
-              const target = Number(goal.targetDays) || 0;
-              const percent = target > 0 ? Math.min(100, Math.round((currentProgress / target) * 100)) : 0;
+        // --- 2. TU CONFIGURACIÓN DE FIREBASE ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyAkhWpZAD7dS02e31o47q_IkI_C3cwKvw0",
+            authDomain: "habitos-guada.firebaseapp.com",
+            projectId: "habitos-guada",
+            storageBucket: "habitos-guada.firebasestorage.app",
+            messagingSenderId: "151671576862",
+            appId: "1:151671576862:web:54a60bf332537b683a110f",
+            measurementId: "G-2QNG8Y123J"
+        };
 
-              return (
-                <div key={goal.id} className="bg-orange-50/50 border border-orange-100 p-4 rounded-2xl">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="bg-orange-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">{index + 1}</span>
-                    <select 
-                      value={goal.habitKey} 
-                      onChange={(e) => updateGoal(goal.id, 'habitKey', e.target.value)}
-                      className="bg-white border border-orange-200 text-sm rounded-lg px-2 py-1 outline-none focus:border-orange-400 flex-1 font-semibold text-slate-700"
-                    >
-                      <option value="">Elegir Hábito...</option>
-                      {Object.entries(habitLabels).map(([key, label]) => (
-                        <option key={key} value={key}>{label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  
-                  <div className="flex items-center gap-2 mb-4">
-                    <span className="text-xs font-bold text-slate-500 uppercase">Meta (Días):</span>
-                    <input 
-                      type="number" 
-                      min="1" max="31"
-                      value={goal.targetDays} 
-                      onChange={(e) => updateGoal(goal.id, 'targetDays', e.target.value)}
-                      className="bg-white border border-orange-200 text-sm rounded-lg w-16 px-2 py-1 outline-none focus:border-orange-400 font-bold text-center"
-                      placeholder="0"
-                    />
-                  </div>
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
 
-                  {goal.habitKey && target > 0 && (
-                    <div>
-                      <div className="flex justify-between text-xs font-bold mb-1">
-                        <span className="text-slate-600">{currentProgress} / {target} días</span>
-                        <span className="text-orange-600">{percent}%</span>
-                      </div>
-                      <div className="h-2.5 w-full bg-stone-200 rounded-full overflow-hidden">
-                        <div className="h-full bg-gradient-to-r from-orange-400 to-rose-400 transition-all" style={{ width: `${percent}%` }}></div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        // --- 3. COMPONENTE PRINCIPAL ---
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [activeTab, setActiveTab] = useState('daily');
+            const [date] = useState(new Date().toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
+            const [saved, setSaved] = useState(false);
+            const [historicalData, setHistoricalData] = useState([]);
+            const [loading, setLoading] = useState(true);
 
-        {/* TOP CARDS */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <DashboardCard title="PUNTUACIÓN PROMEDIO" value={avgScore} subtext="Base 100 puntos" color="rose" />
-          <DashboardCard title="DÍAS REGISTRADOS" value={totalDays} subtext="En el mes seleccionado" color="amber" />
-          <DashboardCard title="Ánimo Dominante" value={totalDays > 0 ? "Bueno" : "-"} subtext="" color="orange" />
-        </div>
+            const [monthlyGoals, setMonthlyGoals] = useState([
+                { id: 1, habitKey: '', targetDays: '' },
+                { id: 2, habitKey: '', targetDays: '' },
+                { id: 3, habitKey: '', targetDays: '' }
+            ]);
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          
-          {/* COLUMNA IZQUIERDA: Insights */}
-          <div className="space-y-6">
-            <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
-              <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                <Lightbulb className="text-amber-500" size={20}/> Insights del Mes
-              </h3>
-              <div className="space-y-3">
-                <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-xl">
-                  <p className="text-xs font-bold text-emerald-800 uppercase tracking-wide mb-1">Punto Destacado</p>
-                  <p className="text-emerald-900 text-sm font-medium">{totalDays > 0 ? `Tu hábito más fuerte es: ${bestHabit}` : 'No hay datos suficientes.'}</p>
-                </div>
-                <div className="bg-rose-50 border border-rose-100 p-3 rounded-xl">
-                  <p className="text-xs font-bold text-rose-800 uppercase tracking-wide mb-1">Área de Mejora</p>
-                  <p className="text-rose-900 text-sm font-medium">{totalDays > 0 ? `Podrías prestar más atención a: ${worstHabit}` : 'No hay datos suficientes.'}</p>
-                </div>
-              </div>
-            </div>
-          </div>
+            const habitLabels = {
+                gym: 'Gimnasia', recreation: 'Recreación', enzo: 'Pasear a Enzo', 
+                inform: 'Informarme', learn: 'Aprender algo', friends: 'Amigos/Familia', nico: 'Tiempo con Nico'
+            };
 
-          {/* COLUMNA DERECHA: Gráficos */}
-          <div className="lg:col-span-2 space-y-6">
-            
-            {/* Gráfico de Evolución */}
-            <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
-              <h3 className="font-bold text-slate-800 mb-6">Evolución de Puntuación Diaria</h3>
-              <div className="h-48 flex items-end justify-between gap-1 border-b border-l border-stone-200 p-2 relative">
-                <div className="absolute top-0 left-[-20px] text-xs text-stone-400">100</div>
-                <div className="absolute bottom-[50%] left-[-20px] text-xs text-stone-400">50</div>
-                <div className="absolute bottom-0 left-[-15px] text-xs text-stone-400">0</div>
+            const [habits, setHabits] = useState({ gym: false, recreation: false, enzo: false, inform: false, learn: false, friends: false, nico: false });
+            const [ratings, setRatings] = useState({ sleep: 0, food: 0, water: 0, work: 0, phone: 0 });
+            const [steps, setSteps] = useState('');
+            const [cycleDay, setCycleDay] = useState('');
+            const [mood, setMood] = useState(null);
+            const [physicalState, setPhysicalState] = useState([]);
+
+            // Autenticación
+            useEffect(() => {
+                const initAuth = async () => {
+                    try { await signInAnonymously(auth); } catch (err) { console.error("Auth error", err); }
+                };
+                initAuth();
+                return onAuthStateChanged(auth, (u) => {
+                    setUser(u);
+                    if (!u) setLoading(false);
+                });
+            }, []);
+
+            // Carga de Datos
+            useEffect(() => {
+                if (!user) return;
                 
-                {thisMonthData.length > 0 ? [...thisMonthData].reverse().map((day, i) => (
-                  <div key={i} className="w-full bg-orange-100 rounded-t-sm hover:bg-orange-300 transition-colors group relative" style={{ height: `${day.score}%` }}>
-                    <div className="opacity-0 group-hover:opacity-100 absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs py-1 px-2 rounded font-bold z-10">
-                      {day.score} pts
-                    </div>
-                  </div>
-                )) : (
-                  <div className="w-full text-center text-stone-400 text-sm self-center">Guarda tu primer día para ver el gráfico.</div>
-                )}
-              </div>
-            </div>
+                // NOTA: Usamos la ruta simplificada para coincidir con tus reglas de Firestore
+                const logsRef = collection(db, 'users', user.uid, 'daily_logs');
+                const unsubLogs = onSnapshot(logsRef, (snap) => {
+                    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                    data.sort((a, b) => new Date(b.date) - new Date(a.date));
+                    setHistoricalData(data);
+                    setLoading(false);
 
-            {/* Frecuencia de Hábitos */}
-            <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
-              <h3 className="font-bold text-slate-800 mb-6">Frecuencia de Hábitos (%)</h3>
-              <div className="space-y-4">
-                {habitPercentages.map((habit, i) => (
-                  <div key={i} className="flex items-center gap-4">
-                    <div className="w-1/3 text-right text-sm font-semibold text-slate-600 truncate">{habit.label}</div>
-                    <div className="w-2/3 h-4 bg-stone-100 rounded-full overflow-hidden relative">
-                      <div className="h-full bg-orange-400 rounded-full" style={{ width: `${habit.percent}%` }}></div>
-                    </div>
-                    <div className="w-8 text-xs font-bold text-slate-500">{habit.percent}%</div>
-                  </div>
-                ))}
-              </div>
-            </div>
+                    const todayId = new Date().toISOString().split('T')[0];
+                    const todayData = data.find(d => d.id === todayId);
+                    if (todayData) {
+                        setHabits(todayData.habits || habits);
+                        setRatings(todayData.ratings || ratings);
+                        setSteps(todayData.steps || '');
+                        setCycleDay(todayData.cycleDay || '');
+                        setMood(todayData.mood || null);
+                        setPhysicalState(todayData.physicalState || []);
+                    }
+                });
 
-            {/* Sensaciones Acumuladas */}
-            <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
-              <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                <Brain className="text-purple-500" size={20}/> Sensaciones Predominantes
-              </h3>
-              <p className="text-sm text-slate-500 mb-4">Veces que registraste cada sensación este mes.</p>
-              
-              {sortedSensations.length > 0 ? (
-                <div className="flex flex-wrap gap-3">
-                  {sortedSensations.map(([tag, count]) => {
-                    const tagInfo = physicalTags.find(t => t.label === tag);
-                    const isPositive = tagInfo?.type === 'positive';
-                    return (
-                      <div key={tag} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-sm font-semibold ${
-                        isPositive ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'
-                      }`}>
-                        {tagInfo?.icon}
-                        <span>{tag}</span>
-                        <span className={`ml-1 px-1.5 py-0.5 rounded-md text-xs ${
-                          isPositive ? 'bg-emerald-200 text-emerald-900' : 'bg-rose-200 text-rose-900'
-                        }`}>{count}</span>
-                      </div>
-                    );
-                  })}
+                const goalsRef = doc(db, 'users', user.uid, 'settings');
+                const unsubGoals = onSnapshot(goalsRef, (docSnap) => {
+                    if (docSnap.exists() && docSnap.data().goals) {
+                        setMonthlyGoals(docSnap.data().goals);
+                    }
+                });
+
+                return () => { unsubLogs(); unsubGoals(); };
+            }, [user]);
+
+            // Lógica de Puntuación (Basada en tu imagen)
+            const dailyScore = useMemo(() => {
+                let score = 0;
+                const habitKeys = Object.keys(habits);
+                const completedHabitsCount = habitKeys.filter(k => habits[k]).length;
+                score += (completedHabitsCount / habitKeys.length) * 55; // Hasta 55 pts
+                score += (ratings.food || 0) * 5;  // Hasta 25 pts
+                score += (ratings.water || 0) * 2; // Hasta 10 pts
+                score += (ratings.sleep || 0) * 2; // Hasta 10 pts
+                return Math.min(100, Math.round(score));
+            }, [habits, ratings]);
+
+            // Handlers
+            const handleSave = async () => {
+                if (!user) return;
+                setSaved(true);
+                const todayId = new Date().toISOString().split('T')[0];
+                const logDoc = doc(db, 'users', user.uid, 'daily_logs', todayId);
+                
+                await setDoc(logDoc, {
+                    date: new Date().toISOString(),
+                    score: dailyScore,
+                    habits, ratings, steps, cycleDay, mood, physicalState
+                });
+                setTimeout(() => setSaved(false), 2000);
+            };
+
+            const updateGoal = async (id, field, value) => {
+                const updated = monthlyGoals.map(g => g.id === id ? { ...g, [field]: value } : g);
+                setMonthlyGoals(updated);
+                if (user) {
+                    const goalsRef = doc(db, 'users', user.uid, 'settings');
+                    await setDoc(goalsRef, { goals: updated }, { merge: true });
+                }
+            };
+
+            const toggleHabit = (key) => setHabits(prev => ({ ...prev, [key]: !prev[key] }));
+            const setRating = (key, value) => setRatings(prev => ({ ...prev, [key]: value }));
+            const togglePhysicalState = (tag) => {
+                setPhysicalState(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+            };
+
+            // Componentes UI Reutilizables
+            const HabitButton = ({ active, onClick, icon, label, color }) => {
+                const colorStyles = {
+                    emerald: active ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'hover:border-emerald-200',
+                    amber: active ? 'bg-amber-50 border-amber-300 text-amber-800' : 'hover:border-amber-200',
+                    purple: active ? 'bg-purple-50 border-purple-300 text-purple-800' : 'hover:border-purple-200',
+                    blue: active ? 'bg-blue-50 border-blue-300 text-blue-800' : 'hover:border-blue-200',
+                    indigo: active ? 'bg-indigo-50 border-indigo-300 text-indigo-800' : 'hover:border-indigo-200',
+                    rose: active ? 'bg-rose-50 border-rose-300 text-rose-800' : 'hover:border-rose-200',
+                };
+                return (
+                    <button onClick={onClick} className={`flex items-center justify-between p-3 rounded-2xl transition-all border ${active ? colorStyles[color] : 'bg-stone-50 border-stone-100 text-stone-600 shadow-sm'}`}>
+                        <div className="flex items-center gap-3">
+                            <div className={`p-2 rounded-xl text-lg ${active ? 'bg-white shadow-sm' : 'bg-stone-200 text-stone-500'}`} dangerouslySetInnerHTML={{__html: icon}}></div>
+                            <span className="font-bold text-sm">{label}</span>
+                        </div>
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${active ? 'border-current bg-current' : 'border-stone-300'}`}>
+                            {active && <i className="ph-bold ph-check text-white text-xs"></i>}
+                        </div>
+                    </button>
+                );
+            };
+
+            const RatingRow = ({ label, value, onChange, icon }) => (
+                <div className="flex items-center justify-between p-2 rounded-xl hover:bg-stone-50 transition-colors">
+                    <div className="flex items-center gap-2">
+                        <div className="bg-stone-100 p-2 rounded-lg text-lg" dangerouslySetInnerHTML={{__html: icon}}></div>
+                        <span className="font-bold text-sm text-slate-700">{label}</span>
+                    </div>
+                    <div className="flex gap-1.5">
+                        {[1, 2, 3, 4, 5].map((num) => (
+                            <button key={num} onClick={() => onChange(num)} className={`w-8 h-8 rounded-full text-sm font-black transition-all ${value === num ? 'bg-orange-400 text-white shadow-md scale-110' : 'bg-stone-100 text-stone-400 hover:bg-stone-200'}`}>
+                                {num}
+                            </button>
+                        ))}
+                    </div>
                 </div>
-              ) : (
-                <p className="text-slate-500 text-sm">No hay registros de sensaciones aún.</p>
-              )}
-            </div>
+            );
 
-          </div>
-        </div>
-      </div>
-    );
-  };
+            const physicalTags = [
+                { label: 'Llena de energía', icon: '<i class="ph-fill ph-lightning"></i>', type: 'positive' },
+                { label: 'Liviana / Fuerte', icon: '<i class="ph-fill ph-barbell"></i>', type: 'positive' },
+                { label: 'Descansada', icon: '<i class="ph-fill ph-coffee"></i>', type: 'positive' },
+                { label: 'Inspirada', icon: '<i class="ph-fill ph-fire"></i>', type: 'positive' },
+                { label: 'Cansada', icon: '<i class="ph-fill ph-battery-warning"></i>', type: 'negative' },
+                { label: 'Dolorida', icon: '<i class="ph-fill ph-warning-circle"></i>', type: 'negative' },
+                { label: 'Con Hambre', icon: '<i class="ph-fill ph-fork-knife"></i>', type: 'negative' },
+                { label: 'Mal humorada', icon: '<i class="ph-fill ph-smiley-sad"></i>', type: 'negative' },
+                { label: 'Dolor de cabeza', icon: '<i class="ph-fill ph-brain"></i>', type: 'negative' },
+                { label: 'Dolor de panza', icon: '<i class="ph-bold ph-activity"></i>', type: 'negative' },
+                { label: 'Pesada', icon: '<i class="ph-fill ph-sneaker"></i>', type: 'negative' },
+            ];
 
-  return (
-    <div style={{ fontFamily: '"Nunito", "Quicksand", "Segoe UI", system-ui, sans-serif' }} className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-rose-50 p-4 md:p-8 text-slate-800">
-      <div className="max-w-6xl mx-auto space-y-6">
-        
-        {/* HEADER & TABS */}
-        <div className="bg-white/80 backdrop-blur-md p-4 md:p-6 rounded-3xl shadow-sm border border-white flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="text-center md:text-left">
-            <h1 className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-orange-500 to-rose-500">
-              Registro Diario
-            </h1>
-            <p className="text-slate-500 capitalize text-sm font-medium">{date}</p>
-          </div>
-          
-          <div className="flex bg-stone-100 p-1.5 rounded-2xl">
-            <button 
-              onClick={() => setActiveTab('daily')}
-              className={`flex items-center gap-2 px-6 py-2 rounded-xl font-bold transition-all text-sm ${
-                activeTab === 'daily' ? 'bg-white text-orange-500 shadow-sm' : 'text-stone-500 hover:text-stone-700'
-              }`}
-            >
-              <CalendarDays size={16} /> Día
-            </button>
-            <button 
-              onClick={() => setActiveTab('monthly')}
-              className={`flex items-center gap-2 px-6 py-2 rounded-xl font-bold transition-all text-sm ${
-                activeTab === 'monthly' ? 'bg-white text-rose-500 shadow-sm' : 'text-stone-500 hover:text-stone-700'
-              }`}
-            >
-              <TrendingUp size={16} /> Resumen
-            </button>
-          </div>
+            const moodOptions = [
+                { value: 'terrible', icon: '<i class="ph-fill ph-smiley-sad text-3xl"></i>', color: 'text-rose-500 bg-rose-100', label: 'Malo' },
+                { value: 'meh', icon: '<i class="ph-fill ph-smiley-meh text-3xl"></i>', color: 'text-amber-500 bg-amber-100', label: 'Regular' },
+                { value: 'good', icon: '<i class="ph-fill ph-smiley text-3xl"></i>', color: 'text-emerald-500 bg-emerald-100', label: 'Bueno' },
+                { value: 'great', icon: '<i class="ph-fill ph-smiley-wink text-3xl"></i>', color: 'text-teal-500 bg-teal-100', label: 'Excelente' },
+            ];
 
-          <button 
-            onClick={handleSave}
-            className={`hidden md:flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold transition-all text-sm ${
-              saved ? 'bg-emerald-500 text-white' : 'bg-orange-500 hover:bg-orange-600 text-white shadow-md shadow-orange-200'
-            }`}
-          >
-            {saved ? <CheckCircle2 size={18} /> : <Save size={18} />}
-            {saved ? 'Guardado' : 'Guardar Día'}
-          </button>
-        </div>
+            if (loading) return <div className="min-h-screen flex items-center justify-center font-bold text-orange-500"><i className="ph-bold ph-activity animate-pulse text-2xl mr-2"></i> Cargando tu energía...</div>;
 
-        {/* CONTENIDO PRINCIPAL */}
-        {activeTab === 'daily' ? renderDailyTab() : renderMonthlyTab()}
+            return (
+                <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6">
+                    {/* HEADER */}
+                    <div className="bg-white/90 backdrop-blur-md p-4 md:p-6 rounded-3xl shadow-sm border border-white flex flex-col md:flex-row justify-between items-center gap-4">
+                        <div className="text-center md:text-left">
+                            <h1 className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-orange-500 to-rose-500">Mi Energía Diaria</h1>
+                            <p className="text-slate-500 capitalize text-sm font-bold">{date}</p>
+                        </div>
+                        
+                        <div className="flex bg-stone-100 p-1.5 rounded-2xl">
+                            <button onClick={() => setActiveTab('daily')} className={`flex items-center gap-2 px-6 py-2 rounded-xl font-black transition-all text-sm ${activeTab === 'daily' ? 'bg-white text-orange-500 shadow-sm' : 'text-stone-500'}`}>
+                                <i className="ph-bold ph-calendar"></i> Día
+                            </button>
+                            <button onClick={() => setActiveTab('monthly')} className={`flex items-center gap-2 px-6 py-2 rounded-xl font-black transition-all text-sm ${activeTab === 'monthly' ? 'bg-white text-rose-500 shadow-sm' : 'text-stone-500'}`}>
+                                <i className="ph-bold ph-trend-up"></i> Resumen
+                            </button>
+                        </div>
 
-      </div>
-    </div>
-  );
-};
+                        <button onClick={handleSave} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black transition-all text-sm ${saved ? 'bg-emerald-500 text-white' : 'bg-orange-500 text-white shadow-lg shadow-orange-200 hover:scale-105 active:scale-95'}`}>
+                            {saved ? <i className="ph-bold ph-check-circle text-lg"></i> : <i className="ph-bold ph-floppy-disk text-lg"></i>}
+                            {saved ? 'Guardado' : 'Guardar Día'}
+                        </button>
+                    </div>
 
-// --- COMPONENTES AUXILIARES ---
+                    {activeTab === 'daily' ? (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                            {/* Puntuación e Ingresos */}
+                            <div className="space-y-6">
+                                <div className="bg-gradient-to-r from-orange-400 to-rose-400 p-6 rounded-3xl shadow-lg text-white flex justify-between items-center">
+                                    <div>
+                                        <h2 className="text-xl font-black flex items-center gap-2 mb-1"><i className="ph-bold ph-activity text-2xl"></i> Puntos de hoy</h2>
+                                        <p className="text-orange-50 text-xs font-bold opacity-80">Base 100 puntos</p>
+                                    </div>
+                                    <div className="text-5xl font-black">{dailyScore}</div>
+                                </div>
 
-// Botón para Hábitos Sí/No
-const HabitButton = ({ active, onClick, icon, label, color }) => {
-  const colorStyles = {
-    emerald: active ? 'bg-emerald-50 border-emerald-300 text-emerald-800' : 'hover:border-emerald-200',
-    amber: active ? 'bg-amber-50 border-amber-300 text-amber-800' : 'hover:border-amber-200',
-    purple: active ? 'bg-purple-50 border-purple-300 text-purple-800' : 'hover:border-purple-200',
-    blue: active ? 'bg-blue-50 border-blue-300 text-blue-800' : 'hover:border-blue-200',
-    indigo: active ? 'bg-indigo-50 border-indigo-300 text-indigo-800' : 'hover:border-indigo-200',
-    rose: active ? 'bg-rose-50 border-rose-300 text-rose-800' : 'hover:border-rose-200',
-  };
+                                <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
+                                    <h2 className="text-lg font-black text-slate-700 mb-4 flex items-center gap-2"><i className="ph-fill ph-check-circle text-emerald-500 text-xl"></i> Acciones</h2>
+                                    <div className="grid grid-cols-1 gap-2">
+                                        <HabitButton active={habits.gym} onClick={() => toggleHabit('gym')} icon='<i class="ph-fill ph-barbell"></i>' label="Gimnasia" color="emerald" />
+                                        <HabitButton active={habits.recreation} onClick={() => toggleHabit('recreation')} icon='<i class="ph-fill ph-book-open"></i>' label="Recreación" color="purple" />
+                                        <HabitButton active={habits.enzo} onClick={() => toggleHabit('enzo')} icon='<i class="ph-fill ph-dog"></i>' label="Pasear a Enzo" color="amber" />
+                                        <HabitButton active={habits.inform} onClick={() => toggleHabit('inform')} icon='<i class="ph-fill ph-info"></i>' label="Informarme" color="blue" />
+                                        <HabitButton active={habits.learn} onClick={() => toggleHabit('learn')} icon='<i class="ph-fill ph-graduation-cap"></i>' label="Proyecto / Tesis" color="indigo" />
+                                        <HabitButton active={habits.friends} onClick={() => toggleHabit('friends')} icon='<i class="ph-fill ph-users"></i>' label="Amigos / Familia" color="rose" />
+                                        <HabitButton active={habits.nico} onClick={() => toggleHabit('nico')} icon='<i class="ph-fill ph-heart"></i>' label="Tiempo con Nico" color="rose" />
+                                    </div>
+                                </div>
+                            </div>
 
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center justify-between p-3 rounded-2xl transition-all border ${
-        active ? colorStyles[color] : 'bg-stone-50 border-stone-100 text-stone-600 hover:bg-stone-100'
-      }`}
-    >
-      <div className="flex items-center gap-3">
-        <div className={`p-2 rounded-xl ${active ? 'bg-white shadow-sm' : 'bg-stone-200 text-stone-500'}`}>
-          {icon}
-        </div>
-        <span className="font-semibold text-sm">{label}</span>
-      </div>
-      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-colors ${
-        active ? 'border-current bg-current' : 'border-stone-300'
-      }`}>
-        {active && <CheckCircle2 size={14} className="text-white" />}
-      </div>
-    </button>
-  );
-};
+                            {/* Puntuaciones y Bienestar */}
+                            <div className="space-y-6">
+                                <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
+                                    <h2 className="text-lg font-black text-slate-700 mb-4 flex items-center gap-2"><i className="ph-fill ph-star text-amber-400 text-xl"></i> Calidad (1-5)</h2>
+                                    <div className="space-y-3">
+                                        <RatingRow label="Sueño" value={ratings.sleep} onChange={(v) => setRating('sleep', v)} icon='<i class="ph-fill ph-moon text-indigo-500"></i>' />
+                                        <RatingRow label="Comida" value={ratings.food} onChange={(v) => setRating('food', v)} icon='<i class="ph-fill ph-fork-knife text-orange-500"></i>' />
+                                        <RatingRow label="Agua" value={ratings.water} onChange={(v) => setRating('water', v)} icon='<i class="ph-fill ph-drop text-blue-500"></i>' />
+                                        <RatingRow label="Trabajo" value={ratings.work} onChange={(v) => setRating('work', v)} icon='<i class="ph-fill ph-briefcase text-slate-500"></i>' />
+                                        <RatingRow label="Celular" value={ratings.phone} onChange={(v) => setRating('phone', v)} icon='<i class="ph-fill ph-device-mobile text-rose-500"></i>' />
+                                    </div>
+                                </div>
 
-// Fila para calificar del 1 al 5
-const RatingRow = ({ label, value, onChange, icon }) => (
-  <div className="flex items-center justify-between p-2 rounded-xl hover:bg-stone-50 transition-colors">
-    <div className="flex items-center gap-2">
-      <div className="bg-stone-100 p-2 rounded-lg">{icon}</div>
-      <span className="font-bold text-sm text-slate-700">{label}</span>
-    </div>
-    <div className="flex gap-1.5">
-      {[1, 2, 3, 4, 5].map((num) => (
-        <button
-          key={num}
-          onClick={() => onChange(num)}
-          className={`w-8 h-8 rounded-full text-sm font-bold flex items-center justify-center transition-all ${
-            value === num 
-              ? 'bg-amber-400 text-amber-900 shadow-md scale-110' 
-              : 'bg-stone-100 text-stone-400 hover:bg-stone-200'
-          }`}
-        >
-          {num}
-        </button>
-      ))}
-    </div>
-  </div>
-);
+                                <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100 grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-sm font-black text-slate-600 flex items-center gap-2 mb-2"><i className="ph-fill ph-sneaker text-orange-500 text-lg"></i> Pasos</label>
+                                        <input type="number" value={steps} onChange={e => setSteps(e.target.value)} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-2xl text-lg font-black outline-none focus:border-orange-400 focus:bg-white text-center" placeholder="0" />
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-black text-slate-600 flex items-center gap-2 mb-2"><i className="ph-fill ph-calendar-blank text-rose-400 text-lg"></i> Ciclo</label>
+                                        <input type="number" value={cycleDay} onChange={e => setCycleDay(e.target.value)} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-2xl text-lg font-black outline-none focus:border-rose-400 focus:bg-white text-center" placeholder="Día" />
+                                    </div>
+                                </div>
 
-// Tarjeta superior del Dashboard
-const DashboardCard = ({ title, value, subtext, color }) => {
-  const bgColors = {
-    rose: 'bg-rose-50 border-rose-100 text-rose-900',
-    emerald: 'bg-emerald-50 border-emerald-100 text-emerald-900',
-    indigo: 'bg-indigo-50 border-indigo-100 text-indigo-900',
-    orange: 'bg-orange-50 border-orange-100 text-orange-900',
-    amber: 'bg-amber-50 border-amber-100 text-amber-900'
-  };
-  const textColors = {
-    rose: 'text-rose-700',
-    emerald: 'text-emerald-700',
-    indigo: 'text-indigo-700',
-    orange: 'text-orange-700',
-    amber: 'text-amber-700'
-  };
+                                <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
+                                    <h2 className="text-lg font-black text-slate-700 mb-4 flex items-center gap-2"><i className="ph-fill ph-brain text-purple-500 text-xl"></i> Sensaciones</h2>
+                                    
+                                    <div className="flex justify-between mb-5 bg-stone-50 p-2 rounded-2xl">
+                                        {moodOptions.map(m => (
+                                            <button key={m.value} onClick={() => setMood(m.value)} className={`p-3 flex-1 flex flex-col items-center gap-1 rounded-xl transition-all ${mood === m.value ? `${m.color} scale-105 shadow-md` : 'text-stone-400 hover:bg-stone-100'}`}>
+                                                <div dangerouslySetInnerHTML={{__html: m.icon}}></div>
+                                                <span className="text-[10px] font-bold uppercase tracking-wide">{m.label}</span>
+                                            </button>
+                                        ))}
+                                    </div>
 
-  return (
-    <div className={`p-6 rounded-3xl border shadow-sm ${bgColors[color]}`}>
-      <h3 className={`text-xs font-black uppercase tracking-wider mb-2 ${textColors[color]}`}>{title}</h3>
-      <div className="text-4xl font-black mb-1">{value}</div>
-      {subtext && <div className="text-xs bg-white/50 inline-block px-2 py-1 rounded border border-white/40">{subtext}</div>}
-    </div>
-  );
-};
+                                    <div className="flex flex-wrap gap-2">
+                                        {physicalTags.map(tag => (
+                                            <button key={tag.label} onClick={() => togglePhysicalState(tag.label)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${physicalState.includes(tag.label) ? (tag.type === 'positive' ? 'bg-emerald-100 border-emerald-300 text-emerald-800' : 'bg-rose-100 border-rose-300 text-rose-800') : 'bg-white border-stone-200 text-stone-500 shadow-sm'}`}>
+                                                <div dangerouslySetInnerHTML={{__html: tag.icon}}></div> {tag.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="space-y-6">
+                            {/* OBJETIVOS DEL MES */}
+                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-orange-100">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="font-black text-slate-800 flex items-center gap-2"><i className="ph-fill ph-target text-orange-500 text-2xl"></i> Mis 3 Objetivos del Mes</h3>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    {monthlyGoals.map((goal, idx) => {
+                                        const current = goal.habitKey ? historicalData.filter(d => d.habits && d.habits[goal.habitKey]).length : 0;
+                                        const target = Number(goal.targetDays) || 0;
+                                        const pct = target > 0 ? Math.min(100, Math.round((current / target) * 100)) : 0;
+                                        return (
+                                            <div key={goal.id} className="bg-orange-50/50 p-4 rounded-2xl border border-orange-100">
+                                                <div className="flex items-center gap-2 mb-2">
+                                                    <span className="bg-orange-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black">{idx + 1}</span>
+                                                    <select value={goal.habitKey} onChange={e => updateGoal(goal.id, 'habitKey', e.target.value)} className="bg-white border border-orange-200 rounded-lg px-2 py-1 text-xs font-bold outline-none flex-1">
+                                                        <option value="">Elegir Hábito...</option>
+                                                        {Object.entries(habitLabels).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
+                                                    </select>
+                                                </div>
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <input type="number" value={goal.targetDays} onChange={e => updateGoal(goal.id, 'targetDays', e.target.value)} className="w-12 p-1 border rounded-lg text-center text-xs font-black" placeholder="Días" />
+                                                    <span className="text-xs font-black text-orange-600">{current} / {target} días ({pct}%)</span>
+                                                </div>
+                                                <div className="h-2 w-full bg-stone-200 rounded-full overflow-hidden">
+                                                    <div className="h-full bg-orange-400" style={{ width: `${pct}%` }}></div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
 
-export default App;
+                            {/* DASHBOARD CARDS */}
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="p-6 rounded-3xl border bg-rose-50 text-rose-700 border-rose-100 shadow-sm">
+                                    <h4 className="text-[10px] font-black uppercase tracking-widest mb-2 opacity-70">PUNTUACIÓN PROMEDIO</h4>
+                                    <div className="text-4xl font-black">{historicalData.length > 0 ? Math.round(historicalData.reduce((a,b)=>a+b.score,0)/historicalData.length) : 0}</div>
+                                </div>
+                                <div className="p-6 rounded-3xl border bg-amber-50 text-amber-700 border-amber-100 shadow-sm">
+                                    <h4 className="text-[10px] font-black uppercase tracking-widest mb-2 opacity-70">DÍAS REGISTRADOS</h4>
+                                    <div className="text-4xl font-black">{historicalData.length}</div>
+                                </div>
+                                <div className="p-6 rounded-3xl border bg-orange-50 text-orange-700 border-orange-100 shadow-sm">
+                                    <h4 className="text-[10px] font-black uppercase tracking-widest mb-2 opacity-70">DÍA DEL MES</h4>
+                                    <div className="text-4xl font-black">{new Date().getDate()}</div>
+                                </div>
+                            </div>
+
+                            {/* GRÁFICO Y FRECUENCIA */}
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
+                                    <h3 className="font-black text-slate-800 mb-6">Evolución Diaria</h3>
+                                    <div className="h-40 flex items-end gap-1 border-b border-l p-2">
+                                        {historicalData.slice(0, 15).reverse().map((d, i) => (
+                                            <div key={i} className="flex-1 bg-orange-200 rounded-t-sm relative group hover:bg-orange-400 transition-colors" style={{ height: `${d.score}%` }}>
+                                                <div className="hidden group-hover:block absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] p-1 rounded font-bold">{d.score}</div>
+                                            </div>
+                                        ))}
+                                        {historicalData.length === 0 && <p className="text-sm text-stone-400 m-auto">Guarda tu primer día para ver el gráfico.</p>}
+                                    </div>
+                                </div>
+                                <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
+                                    <h3 className="font-black text-slate-800 mb-6 flex items-center gap-2"><i className="ph-fill ph-brain text-purple-500 text-xl"></i> Sensaciones Acumuladas</h3>
+                                    <div className="flex flex-wrap gap-2">
+                                        {physicalTags.map(tag => {
+                                            const count = historicalData.filter(d => d.physicalState && d.physicalState.includes(tag.label)).length;
+                                            if (count === 0) return null;
+                                            return (
+                                                <div key={tag.label} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold ${tag.type === 'positive' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-rose-50 border-rose-100 text-rose-700'}`}>
+                                                    <div dangerouslySetInnerHTML={{__html: tag.icon}}></div> <span>{tag.label}</span> <span className="opacity-50">({count})</span>
+                                                </div>
+                                            );
+                                        })}
+                                        {historicalData.length === 0 && <p className="text-sm text-stone-400">Aún no hay registros.</p>}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

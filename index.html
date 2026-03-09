@@ -93,7 +93,6 @@
             useEffect(() => {
                 if (!user) return;
                 
-                // NOTA: Usamos la ruta simplificada para coincidir con tus reglas de Firestore
                 const logsRef = collection(db, 'users', user.uid, 'daily_logs');
                 const unsubLogs = onSnapshot(logsRef, (snap) => {
                     const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -113,7 +112,8 @@
                     }
                 });
 
-                const goalsRef = doc(db, 'users', user.uid, 'settings');
+                // ESTE ERA EL ERROR: Faltaba el último paso de la ruta ('goals')
+                const goalsRef = doc(db, 'users', user.uid, 'settings', 'goals');
                 const unsubGoals = onSnapshot(goalsRef, (docSnap) => {
                     if (docSnap.exists() && docSnap.data().goals) {
                         setMonthlyGoals(docSnap.data().goals);
@@ -123,7 +123,7 @@
                 return () => { unsubLogs(); unsubGoals(); };
             }, [user]);
 
-            // Lógica de Puntuación (Basada en tu imagen)
+            // Lógica de Puntuación
             const dailyScore = useMemo(() => {
                 let score = 0;
                 const habitKeys = Object.keys(habits);
@@ -154,7 +154,8 @@
                 const updated = monthlyGoals.map(g => g.id === id ? { ...g, [field]: value } : g);
                 setMonthlyGoals(updated);
                 if (user) {
-                    const goalsRef = doc(db, 'users', user.uid, 'settings');
+                    // AQUÍ TAMBIÉN: Se corrigió la ruta
+                    const goalsRef = doc(db, 'users', user.uid, 'settings', 'goals');
                     await setDoc(goalsRef, { goals: updated }, { merge: true });
                 }
             };

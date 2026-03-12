@@ -399,6 +399,9 @@
             const bestHabit = habitPercentages.length > 0 && totalDays > 0 ? habitPercentages[0].label : 'No hay datos suficientes.';
             const worstHabit = habitPercentages.length > 0 && totalDays > 0 ? habitPercentages[habitPercentages.length - 1].label : 'No hay datos suficientes.';
 
+            // Extraer las notas del mes para el Diario
+            const monthNotes = thisMonthData.filter(d => d.notes && d.notes.trim() !== '');
+
             return (
                 <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6">
                     {/* HEADER */}
@@ -715,6 +718,37 @@
                                     </div>
                                 </div>
                             </div>
+                            
+                            {/* NUEVO: DIARIO DEL MES */}
+                            <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-stone-100">
+                                <h3 className="font-black text-slate-800 mb-6 flex items-center gap-2"><i className="ph-fill ph-book-open text-teal-500 text-2xl"></i> Diario del Mes</h3>
+                                {monthNotes.length > 0 ? (
+                                    <div className="space-y-4">
+                                        {[...monthNotes].reverse().map(d => {
+                                            const dayMood = moodOptions.find(m => m.value === d.mood);
+                                            return (
+                                                <div key={d.id} className="p-5 bg-stone-50 rounded-2xl border border-stone-100 hover:border-teal-200 transition-colors">
+                                                    <div className="flex justify-between items-center mb-3">
+                                                        <span className="font-black text-sm text-teal-800 flex items-center gap-2">
+                                                            <i className="ph-fill ph-calendar-blank"></i> {d.date}
+                                                        </span>
+                                                        <div className="flex items-center gap-2">
+                                                            {dayMood && <div className="text-2xl" dangerouslySetInnerHTML={{__html: dayMood.icon}}></div>}
+                                                            <span className="text-xs font-black bg-white px-2.5 py-1 rounded-lg border border-stone-200 shadow-sm">{d.score} pts</span>
+                                                        </div>
+                                                    </div>
+                                                    <p className="text-sm text-slate-700 font-medium leading-relaxed whitespace-pre-wrap">{d.notes}</p>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                ) : (
+                                    <div className="text-center p-8 bg-stone-50 rounded-2xl border border-dashed border-stone-200 text-stone-400 font-bold">
+                                        Todavía no hay notas escritas este mes.<br/>Todo lo que escribas en "Diario y Notas" aparecerá aquí.
+                                    </div>
+                                )}
+                            </div>
+
                         </div>
                     )}
                 </div>

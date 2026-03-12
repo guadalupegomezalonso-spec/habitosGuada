@@ -86,8 +86,8 @@
             };
 
             const [habits, setHabits] = useState({ gym: false, recreation: false, enzo: false, inform: false, learn: false, friends: false, nico: false });
-            // Se quitó pasos, se consolidó movimiento acá
-            const [ratings, setRatings] = useState({ movement: 0, sleep: 0, food: 0, water: 0, work: 0, phone: 0 });
+            // Separamos Trabajo en Productividad y Control de Estrés
+            const [ratings, setRatings] = useState({ movement: 0, sleep: 0, food: 0, water: 0, productivity: 0, stress: 0, phone: 0 });
             const [mood, setMood] = useState(null);
             const [physicalState, setPhysicalState] = useState([]);
             const [notes, setNotes] = useState(''); 
@@ -136,13 +136,13 @@
                 const dayData = historicalData.find(d => d.id === selectedDate);
                 if (dayData) {
                     setHabits(dayData.habits || { gym: false, recreation: false, enzo: false, inform: false, learn: false, friends: false, nico: false });
-                    setRatings(dayData.ratings || { movement: 0, sleep: 0, food: 0, water: 0, work: 0, phone: 0 });
+                    setRatings(dayData.ratings || { movement: 0, sleep: 0, food: 0, water: 0, productivity: 0, stress: 0, phone: 0 });
                     setMood(dayData.mood || null);
                     setPhysicalState(dayData.physicalState || []);
                     setNotes(dayData.notes || '');
                 } else {
                     setHabits({ gym: false, recreation: false, enzo: false, inform: false, learn: false, friends: false, nico: false });
-                    setRatings({ movement: 0, sleep: 0, food: 0, water: 0, work: 0, phone: 0 });
+                    setRatings({ movement: 0, sleep: 0, food: 0, water: 0, productivity: 0, stress: 0, phone: 0 });
                     setMood(null);
                     setPhysicalState([]);
                     setNotes('');
@@ -155,14 +155,15 @@
                 const habitKeys = Object.keys(habits);
                 const completedHabitsCount = habitKeys.filter(k => habits[k]).length;
                 
-                // 7 Hábitos = 40 puntos máximo
-                score += (completedHabitsCount / habitKeys.length) * 40; 
-                // 6 Ratings (Movimiento, Sueño, Comida, Agua, Trabajo, Celular) = 60 puntos máximo (Cada 1 vale 2 pts)
+                // 7 Hábitos = 30 puntos máximo
+                score += (completedHabitsCount / habitKeys.length) * 30; 
+                // 7 Ratings (Movimiento, Sueño, Comida, Agua, Productividad, Estrés, Celular) = 70 puntos máximo (Cada 1 vale 2 pts)
                 score += (ratings.movement || 0) * 2; 
                 score += (ratings.food || 0) * 2;  
                 score += (ratings.water || 0) * 2; 
                 score += (ratings.sleep || 0) * 2; 
-                score += (ratings.work || 0) * 2; 
+                score += (ratings.productivity || 0) * 2; 
+                score += (ratings.stress || 0) * 2; 
                 score += (ratings.phone || 0) * 2; 
 
                 return Math.min(100, Math.round(score));
@@ -259,7 +260,8 @@
                     if (lowestRating.key === 'water') return "¡Cuidado con la hidratación! Tomate un vaso de agua ahora mismo, tu cuerpo y cerebro te lo van a agradecer. 💧";
                     if (lowestRating.key === 'food') return "No te castigues si hoy la comida no fue ideal. En la próxima comida priorizá algo nutritivo que te haga sentir bien. 🥗";
                     if (lowestRating.key === 'phone') return "Las pantallas nos roban mucha energía. Dejá el celu en otra habitación por un rato y conectá con tu presente. 📵";
-                    if (lowestRating.key === 'work') return "El trabajo estuvo pesado. Acordate de hacer pausas, estirar el cuerpo y respirar profundo. No todo es productividad. 🌿";
+                    if (lowestRating.key === 'productivity') return "La productividad no lo es todo. A veces hacer menos pero con más foco es la verdadera clave. ¡Mañana será otro día! 🎯";
+                    if (lowestRating.key === 'stress') return "Noté que el control del estrés estuvo difícil hoy. Priorizá tu paz mental, soltá lo que no podés controlar y respirá profundo. 🍃";
                 }
 
                 if (physicalState.includes('Estresada')) return "Noté que te sentís estresada. Dedicá 5 minutos a respirar profundo o hacer algo que te relaje. Tu paz mental es prioridad. 🧘‍♀️";
@@ -401,7 +403,7 @@
                             {/* COLUMNA IZQUIERDA */}
                             <div className="space-y-6">
                                 
-                                {/* NUEVO: PANEL DEL CICLO MENSTRUAL */}
+                                {/* PANEL DEL CICLO MENSTRUAL */}
                                 <div className={`p-6 rounded-3xl shadow-sm border transition-colors ${cycleInfo ? cycleInfo.color : 'bg-white border-stone-100'}`}>
                                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
                                         <h2 className="text-lg font-black flex items-center gap-2 text-slate-800">
@@ -462,13 +464,13 @@
                                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
                                     <h2 className="text-lg font-black text-slate-700 mb-4 flex items-center gap-2"><i className="ph-fill ph-star text-amber-400 text-xl"></i> Calidad (1-5)</h2>
                                     <div className="space-y-3">
-                                        {/* MOVIMIENTO AHORA ESTÁ ACÁ ARRIBA */}
                                         <RatingRow label="Movimiento" value={ratings.movement} onChange={(v) => setRating('movement', v)} icon='<i class="ph-fill ph-sneaker text-emerald-500"></i>' />
                                         <RatingRow label="Sueño" value={ratings.sleep} onChange={(v) => setRating('sleep', v)} icon='<i class="ph-fill ph-moon text-indigo-500"></i>' />
                                         <RatingRow label="Comida" value={ratings.food} onChange={(v) => setRating('food', v)} icon='<i class="ph-fill ph-fork-knife text-orange-500"></i>' />
                                         <RatingRow label="Agua" value={ratings.water} onChange={(v) => setRating('water', v)} icon='<i class="ph-fill ph-drop text-blue-500"></i>' />
-                                        <RatingRow label="Trabajo" value={ratings.work} onChange={(v) => setRating('work', v)} icon='<i class="ph-fill ph-briefcase text-slate-500"></i>' />
-                                        <RatingRow label="Celular" value={ratings.phone} onChange={(v) => setRating('phone', v)} icon='<i class="ph-fill ph-device-mobile text-rose-500"></i>' />
+                                        <RatingRow label="Productividad" value={ratings.productivity} onChange={(v) => setRating('productivity', v)} icon='<i class="ph-fill ph-briefcase text-teal-500"></i>' />
+                                        <RatingRow label="Control del Estrés" value={ratings.stress} onChange={(v) => setRating('stress', v)} icon='<i class="ph-fill ph-leaf text-emerald-400"></i>' />
+                                        <RatingRow label="Control del tiempo con el celular" value={ratings.phone} onChange={(v) => setRating('phone', v)} icon='<i class="ph-fill ph-device-mobile text-rose-500"></i>' />
                                     </div>
                                 </div>
 

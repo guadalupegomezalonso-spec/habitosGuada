@@ -68,9 +68,12 @@
             const [historicalData, setHistoricalData] = useState([]);
             const [loading, setLoading] = useState(true);
 
-            // Nuevos Estados para el control del tiempo
+            // Estados para el control del tiempo
             const [selectedDate, setSelectedDate] = useState(getLocalYYYYMMDD());
             const [selectedMonth, setSelectedMonth] = useState(getLocalYYYYMMDD().slice(0, 7)); // Formato YYYY-MM
+            
+            // Estado para el gráfico interactivo de calidades
+            const [selectedQualityChart, setSelectedQualityChart] = useState('movement');
 
             // Configuraciones Guardadas (Objetivos y Ciclo)
             const [monthlyGoals, setMonthlyGoals] = useState([
@@ -78,15 +81,21 @@
                 { id: 2, habitKey: '', targetDays: '' },
                 { id: 3, habitKey: '', targetDays: '' }
             ]);
+            const [goalsLocked, setGoalsLocked] = useState(false);
+            const [goalError, setGoalError] = useState('');
             const [lastPeriodDate, setLastPeriodDate] = useState(''); // El Día 1 de Guada
 
             const habitLabels = {
                 gym: 'Gimnasia', recreation: 'Recreación', enzo: 'Pasear a Enzo', 
                 inform: 'Informarme', learn: 'Aprender algo', friends: 'Amigos/Familia', nico: 'Tiempo con Nico'
             };
+            
+            const qualityLabels = {
+                movement: 'Movimiento', sleep: 'Sueño', food: 'Comida', 
+                water: 'Agua', productivity: 'Productividad', stress: 'Control del Estrés', phone: 'Tiempo de Celular'
+            };
 
             const [habits, setHabits] = useState({ gym: false, recreation: false, enzo: false, inform: false, learn: false, friends: false, nico: false });
-            // Separamos Trabajo en Productividad y Control de Estrés
             const [ratings, setRatings] = useState({ movement: 0, sleep: 0, food: 0, water: 0, productivity: 0, stress: 0, phone: 0 });
             const [mood, setMood] = useState(null);
             const [physicalState, setPhysicalState] = useState([]);
@@ -116,20 +125,39 @@
                     setLoading(false);
                 });
 
-                // Cargar Metas
-                const goalsRef = doc(db, 'users', user.uid, 'settings', 'goals');
-                const unsubGoals = onSnapshot(goalsRef, (docSnap) => {
-                    if (docSnap.exists() && docSnap.data().goals) setMonthlyGoals(docSnap.data().goals);
-                });
-
                 // Cargar Configuración del Ciclo
                 const cycleRef = doc(db, 'users', user.uid, 'settings', 'cycle');
                 const unsubCycle = onSnapshot(cycleRef, (docSnap) => {
                     if (docSnap.exists() && docSnap.data().lastPeriodDate) setLastPeriodDate(docSnap.data().lastPeriodDate);
                 });
 
-                return () => { unsubLogs(); unsubGoals(); unsubCycle(); };
+                return () => { unsubLogs(); unsubCycle(); };
             }, [user]);
+
+            // Cargar Metas por Mes Seleccionado
+            useEffect(() => {
+                if (!user) return;
+                const goalsRef = doc(db, 'users', user.uid, 'monthly_goals', selectedMonth);
+                const unsubGoals = onSnapshot(goalsRef, (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        setMonthlyGoals(data.goals || [
+                            { id: 1, habitKey: '', targetDays: '' },
+                            { id: 2, habitKey: '', targetDays: '' },
+                            { id: 3, habitKey: '', targetDays: '' }
+                        ]);
+                        setGoalsLocked(data.locked || false);
+                    } else {
+                        setMonthlyGoals([
+                            { id: 1, habitKey: '', targetDays: '' },
+                            { id: 2, habitKey: '', targetDays: '' },
+                            { id: 3, habitKey: '', targetDays: '' }
+                        ]);
+                        setGoalsLocked(false);
+                    }
+                });
+                return () => unsubGoals();
+            }, [user, selectedMonth]);
 
             // Cargar datos al cambiar de fecha en la pestaña Diaria
             useEffect(() => {
@@ -155,9 +183,7 @@
                 const habitKeys = Object.keys(habits);
                 const completedHabitsCount = habitKeys.filter(k => habits[k]).length;
                 
-                // 7 Hábitos = 30 puntos máximo
                 score += (completedHabitsCount / habitKeys.length) * 30; 
-                // 7 Ratings (Movimiento, Sueño, Comida, Agua, Productividad, Estrés, Celular) = 70 puntos máximo (Cada 1 vale 2 pts)
                 score += (ratings.movement || 0) * 2; 
                 score += (ratings.food || 0) * 2;  
                 score += (ratings.water || 0) * 2; 
@@ -173,15 +199,13 @@
             const cycleInfo = useMemo(() => {
                 if (!lastPeriodDate) return null;
                 
-                // Usamos T00:00:00 para evitar desfasajes horarios
                 const start = new Date(lastPeriodDate + 'T00:00:00'); 
                 const current = new Date(selectedDate + 'T00:00:00');
                 const diffTime = current - start;
                 const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
 
-                if (diffDays < 1) return null; // Fecha seleccionada es previa al Día 1 configurado
+                if (diffDays < 1) return null; 
 
-                // Para definir la fase, lo ciclamos en 28 días aprox por si la persona olvida cargar su nuevo Día 1
                 const dayInCycle = ((diffDays - 1) % 28) + 1;
 
                 let phase = ""; let desc = ""; let icon = ""; let color = "";
@@ -207,7 +231,6 @@
                 return { absoluteDay: diffDays, phase, desc, icon, color };
             }, [lastPeriodDate, selectedDate]);
 
-
             // Handlers
             const handleSave = async () => {
                 if (!user) return;
@@ -223,12 +246,26 @@
             };
 
             const updateGoal = async (id, field, value) => {
+                if (goalsLocked) return;
                 const updated = monthlyGoals.map(g => g.id === id ? { ...g, [field]: value } : g);
                 setMonthlyGoals(updated);
                 if (user) {
-                    const goalsRef = doc(db, 'users', user.uid, 'settings', 'goals');
-                    await setDoc(goalsRef, { goals: updated }, { merge: true });
+                    const goalsRef = doc(db, 'users', user.uid, 'monthly_goals', selectedMonth);
+                    await setDoc(goalsRef, { goals: updated, locked: goalsLocked }, { merge: true });
                 }
+            };
+
+            const lockGoalsForMonth = async () => {
+                if (!user) return;
+                const isValid = monthlyGoals.every(g => g.habitKey && Number(g.targetDays) > 0);
+                if (!isValid) {
+                    setGoalError('Completá los 3 hábitos y sus días meta antes de fijarlos.');
+                    setTimeout(() => setGoalError(''), 4000);
+                    return;
+                }
+                setGoalsLocked(true);
+                const goalsRef = doc(db, 'users', user.uid, 'monthly_goals', selectedMonth);
+                await setDoc(goalsRef, { goals: monthlyGoals, locked: true }, { merge: true });
             };
 
             const updateLastPeriod = async (value) => {
@@ -279,7 +316,7 @@
                 else if (avg >= 50) text += "Venís con un buen ritmo. Hay días mejores y peores, pero la constancia es lo que cuenta. ";
                 else text += "Ha sido un mes con altibajos, pero lo más valioso es que te estás tomando el tiempo de registrar y conocerte. ";
                 
-                if (best && best !== 'No hay datos suficientes.') text += `Tu punto más fuerte viene siendo '${best}', ¡felicidades por sostenerlo! `;
+                if (best && best !== 'No hay datos suficientes.') text += `Tu punto más fuerte de acción viene siendo '${best}', ¡felicidades por sostenerlo! `;
                 if (worst && worst !== 'No hay datos suficientes.') text += `Como recomendación para lo que queda del mes, podrías poner un poquito más de amor y foco en '${worst}'.`;
                 
                 return text;
@@ -350,12 +387,11 @@
 
             if (loading) return <div className="min-h-screen flex items-center justify-center font-bold text-orange-500"><i className="ph-bold ph-activity animate-pulse text-2xl mr-2"></i> Cargando tu energía...</div>;
 
-            // Datos filtrados para el mes seleccionado
+            // --- PROCESAMIENTO DE DATOS PARA EL RESUMEN ---
             const thisMonthData = historicalData.filter(d => d.id.startsWith(selectedMonth));
-            
-            // Cálculos del mes
             const totalDays = thisMonthData.length;
             const avgScore = totalDays > 0 ? Math.round(thisMonthData.reduce((a,b)=>a+b.score,0)/totalDays) : 0;
+            
             const habitCounts = { gym: 0, recreation: 0, enzo: 0, inform: 0, learn: 0, friends: 0, nico: 0 };
             thisMonthData.forEach(day => { Object.keys(habitCounts).forEach(h => { if(day.habits && day.habits[h]) habitCounts[h]++; }); });
             const habitPercentages = Object.keys(habitCounts).map(k => ({ key: k, label: habitLabels[k], percent: totalDays > 0 ? Math.round((habitCounts[k] / totalDays) * 100) : 0 })).sort((a,b) => b.percent - a.percent);
@@ -400,7 +436,7 @@
                     {activeTab === 'daily' ? (
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             
-                            {/* COLUMNA IZQUIERDA */}
+                            {/* COLUMNA IZQUIERDA (DÍA) */}
                             <div className="space-y-6">
                                 
                                 {/* PANEL DEL CICLO MENSTRUAL */}
@@ -412,12 +448,7 @@
                                         </h2>
                                         <div className="flex items-center gap-2 text-xs font-bold text-slate-600 bg-white/60 px-3 py-1.5 rounded-xl border border-white">
                                             <span>Último Día 1:</span>
-                                            <input 
-                                                type="date" 
-                                                value={lastPeriodDate} 
-                                                onChange={(e) => updateLastPeriod(e.target.value)}
-                                                className="bg-transparent outline-none cursor-pointer text-slate-800"
-                                            />
+                                            <input type="date" value={lastPeriodDate} onChange={(e) => updateLastPeriod(e.target.value)} className="bg-transparent outline-none cursor-pointer text-slate-800" />
                                         </div>
                                     </div>
 
@@ -427,7 +458,7 @@
                                             <p className="text-sm font-bold text-slate-700 opacity-90 leading-relaxed">{cycleInfo.desc}</p>
                                         </div>
                                     ) : (
-                                        <p className="text-sm font-bold text-slate-500">Seleccioná la fecha de tu última menstruación (Día 1) arriba a la derecha para ver tu fase y predicciones de energía.</p>
+                                        <p className="text-sm font-bold text-slate-500">Seleccioná la fecha de tu última menstruación (Día 1) arriba a la derecha para ver tu fase.</p>
                                     )}
                                 </div>
 
@@ -459,7 +490,7 @@
                                 </div>
                             </div>
 
-                            {/* COLUMNA DERECHA */}
+                            {/* COLUMNA DERECHA (DÍA) */}
                             <div className="space-y-6">
                                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
                                     <h2 className="text-lg font-black text-slate-700 mb-4 flex items-center gap-2"><i className="ph-fill ph-star text-amber-400 text-xl"></i> Calidad (1-5)</h2>
@@ -470,7 +501,7 @@
                                         <RatingRow label="Agua" value={ratings.water} onChange={(v) => setRating('water', v)} icon='<i class="ph-fill ph-drop text-blue-500"></i>' />
                                         <RatingRow label="Productividad" value={ratings.productivity} onChange={(v) => setRating('productivity', v)} icon='<i class="ph-fill ph-briefcase text-teal-500"></i>' />
                                         <RatingRow label="Control del Estrés" value={ratings.stress} onChange={(v) => setRating('stress', v)} icon='<i class="ph-fill ph-leaf text-emerald-400"></i>' />
-                                        <RatingRow label="Control del tiempo con el celular" value={ratings.phone} onChange={(v) => setRating('phone', v)} icon='<i class="ph-fill ph-device-mobile text-rose-500"></i>' />
+                                        <RatingRow label="Control de Celular" value={ratings.phone} onChange={(v) => setRating('phone', v)} icon='<i class="ph-fill ph-device-mobile text-rose-500"></i>' />
                                     </div>
                                 </div>
 
@@ -496,7 +527,7 @@
                                 </div>
                             </div>
                             
-                            {/* Diario / Notas del Día (Ocupa ambas columnas) */}
+                            {/* Diario / Notas del Día */}
                             <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100 lg:col-span-2">
                                 <h2 className="text-lg font-black text-slate-700 mb-4 flex items-center gap-2"><i className="ph-fill ph-notebook text-teal-500 text-xl"></i> Diario y Notas</h2>
                                 <textarea 
@@ -510,42 +541,79 @@
                     ) : (
                         <div className="space-y-6">
                             
-                            {/* DEVOLUCIÓN MENSUAL INTELIGENTE */}
-                            <div className="bg-rose-50 border border-rose-100 p-6 rounded-3xl shadow-sm">
-                                <h3 className="font-black text-rose-900 mb-3 flex items-center gap-2"><i className="ph-fill ph-magic-wand text-rose-500 text-2xl"></i> Devolución Mensual</h3>
-                                <p className="text-rose-800 text-sm font-bold leading-relaxed">{getMonthlyFeedback(avgScore, bestHabit, worstHabit, totalDays)}</p>
-                            </div>
-
-                            {/* OBJETIVOS DEL MES */}
-                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-orange-100">
+                            {/* OBJETIVOS DEL MES (MÁS RELEVANTES Y BLOQUEABLES) */}
+                            <div className={`p-6 rounded-3xl shadow-sm border transition-all duration-500 ${goalsLocked ? 'bg-gradient-to-br from-orange-400 to-rose-500 text-white border-transparent shadow-lg' : 'bg-white border-orange-200'}`}>
                                 <div className="flex justify-between items-center mb-6">
-                                    <h3 className="font-black text-slate-800 flex items-center gap-2"><i className="ph-fill ph-target text-orange-500 text-2xl"></i> Mis 3 Objetivos del Mes</h3>
+                                    <h3 className={`font-black flex items-center gap-2 text-xl ${goalsLocked ? 'text-white' : 'text-slate-800'}`}>
+                                        <i className="ph-fill ph-target text-3xl"></i> Mis 3 Objetivos Principales
+                                        {goalsLocked && <span className="ml-2 text-xs font-bold bg-white/20 px-3 py-1 rounded-full flex items-center gap-1"><i className="ph-fill ph-lock-key"></i> Fijados</span>}
+                                    </h3>
                                 </div>
+                                
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                     {monthlyGoals.map((goal, idx) => {
                                         const current = goal.habitKey ? thisMonthData.filter(d => d.habits && d.habits[goal.habitKey]).length : 0;
                                         const target = Number(goal.targetDays) || 0;
                                         const pct = target > 0 ? Math.min(100, Math.round((current / target) * 100)) : 0;
+                                        
+                                        if (goalsLocked) {
+                                            // VISTA BLOQUEADA (DASHBOARD ELEGANTE)
+                                            return (
+                                                <div key={goal.id} className="bg-white/20 backdrop-blur-sm p-5 rounded-2xl border border-white/30 relative overflow-hidden">
+                                                    <div className="flex items-center gap-2 mb-3">
+                                                        <span className="bg-white/30 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">{idx + 1}</span>
+                                                        <span className="font-black text-lg text-white leading-tight">{habitLabels[goal.habitKey] || 'Sin definir'}</span>
+                                                    </div>
+                                                    <div className="flex items-end justify-between mb-2">
+                                                        <span className="text-3xl font-black">{current} <span className="text-lg opacity-80">/ {target}</span></span>
+                                                        <span className="text-sm font-black bg-white/20 px-2 py-1 rounded-lg">{pct}%</span>
+                                                    </div>
+                                                    <div className="h-3 w-full bg-black/10 rounded-full overflow-hidden mt-3 relative">
+                                                        <div className="h-full bg-white transition-all duration-1000 absolute left-0 top-0" style={{ width: `${pct}%` }}></div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        }
+
+                                        // VISTA DE EDICIÓN
                                         return (
-                                            <div key={goal.id} className="bg-orange-50/50 p-4 rounded-2xl border border-orange-100">
-                                                <div className="flex items-center gap-2 mb-2">
-                                                    <span className="bg-orange-500 text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black">{idx + 1}</span>
-                                                    <select value={goal.habitKey} onChange={e => updateGoal(goal.id, 'habitKey', e.target.value)} className="bg-white border border-orange-200 rounded-lg px-2 py-1 text-xs font-bold outline-none flex-1">
+                                            <div key={goal.id} className="bg-orange-50/50 p-5 rounded-2xl border border-orange-100">
+                                                <div className="flex items-center gap-2 mb-3">
+                                                    <span className="bg-orange-500 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-black">{idx + 1}</span>
+                                                    <select value={goal.habitKey} onChange={e => updateGoal(goal.id, 'habitKey', e.target.value)} className="bg-white border border-orange-200 rounded-xl px-3 py-2 text-sm font-bold outline-none flex-1 focus:border-orange-500 text-slate-700">
                                                         <option value="">Elegir Hábito...</option>
                                                         {Object.entries(habitLabels).map(([k,v]) => <option key={k} value={k}>{v}</option>)}
                                                     </select>
                                                 </div>
-                                                <div className="flex items-center justify-between mb-2">
-                                                    <input type="number" value={goal.targetDays} onChange={e => updateGoal(goal.id, 'targetDays', e.target.value)} className="w-12 p-1 border rounded-lg text-center text-xs font-black" placeholder="Días" />
-                                                    <span className="text-xs font-black text-orange-600">{current} / {target} días ({pct}%)</span>
-                                                </div>
-                                                <div className="h-2 w-full bg-stone-200 rounded-full overflow-hidden">
-                                                    <div className="h-full bg-orange-400" style={{ width: `${pct}%` }}></div>
+                                                <div className="flex items-center justify-between mb-2 gap-3">
+                                                    <span className="text-xs font-black text-slate-500 uppercase">Meta de días:</span>
+                                                    <input type="number" min="1" max="31" value={goal.targetDays} onChange={e => updateGoal(goal.id, 'targetDays', e.target.value)} className="w-20 p-2 border border-orange-200 rounded-xl text-center text-sm font-black outline-none focus:border-orange-500 text-slate-700" placeholder="0" />
                                                 </div>
                                             </div>
                                         );
                                     })}
                                 </div>
+                                
+                                {!goalsLocked && (
+                                    <div className="mt-6 flex flex-col md:flex-row items-center justify-between gap-4 bg-orange-50/80 p-4 rounded-2xl border border-orange-100">
+                                        <p className="text-xs font-bold text-orange-800 flex items-center gap-2">
+                                            <i className="ph-fill ph-warning-circle text-orange-500 text-lg"></i>
+                                            Una vez fijados, no podrás modificar los objetivos de este mes.
+                                        </p>
+                                        <div className="flex items-center gap-3">
+                                            {goalError && <span className="text-xs font-bold text-rose-500 bg-rose-100 px-3 py-1 rounded-lg">{goalError}</span>}
+                                            <button onClick={lockGoalsForMonth} className="px-6 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-black text-sm rounded-xl shadow-lg transition-all flex items-center gap-2">
+                                                <i className="ph-fill ph-lock-key"></i> Fijar Objetivos
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* DEVOLUCIÓN MENSUAL INTELIGENTE */}
+                            <div className="bg-rose-50 border border-rose-100 p-6 rounded-3xl shadow-sm">
+                                <h3 className="font-black text-rose-900 mb-3 flex items-center gap-2"><i className="ph-fill ph-magic-wand text-rose-500 text-2xl"></i> Devolución Mensual</h3>
+                                <p className="text-rose-800 text-sm font-bold leading-relaxed">{getMonthlyFeedback(avgScore, bestHabit, worstHabit, totalDays)}</p>
                             </div>
 
                             {/* DASHBOARD CARDS */}
@@ -566,13 +634,61 @@
                                 </div>
                             </div>
 
-                            {/* GRÁFICO Y FRECUENCIA */}
+                            {/* GRÁFICOS Y ANÁLISIS DETALLADO */}
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                
+                                {/* DESGLOSE DE CALIDADES (Gráfico filtrable) */}
+                                <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100 flex flex-col">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <h3 className="font-black text-slate-800 flex items-center gap-2"><i className="ph-fill ph-chart-bar text-amber-500 text-xl"></i> Evolución de Calidad</h3>
+                                        <select value={selectedQualityChart} onChange={e => setSelectedQualityChart(e.target.value)} className="bg-amber-50 text-amber-700 border border-amber-200 rounded-xl px-3 py-1.5 text-xs font-bold outline-none cursor-pointer">
+                                            {Object.entries(qualityLabels).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="h-48 flex items-end gap-1.5 border-b border-l border-stone-200 p-2 relative w-full mt-auto">
+                                        <div className="absolute top-0 left-[-12px] text-[10px] font-bold text-stone-400">5</div>
+                                        <div className="absolute bottom-0 left-[-12px] text-[10px] font-bold text-stone-400">0</div>
+                                        {[...thisMonthData].reverse().slice(0, 31).map((d, i) => {
+                                            const val = d.ratings?.[selectedQualityChart] || 0;
+                                            const hPct = (val / 5) * 100;
+                                            return (
+                                                <div key={i} className="flex-1 bg-amber-200 rounded-t-md relative group hover:bg-amber-400 transition-colors" style={{ height: `${hPct}%` }}>
+                                                    <div className="hidden group-hover:block absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] p-1.5 rounded font-bold z-10 whitespace-nowrap">
+                                                        Día {d.id.slice(-2)}: {val} pts
+                                                    </div>
+                                                </div>
+                                            )
+                                        })}
+                                        {thisMonthData.length === 0 && <p className="text-sm text-stone-400 m-auto">Sin datos en este mes.</p>}
+                                    </div>
+                                </div>
+
+                                {/* RENDIMIENTO DE ACCIONES (Barras horizontales) */}
                                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
-                                    <h3 className="font-black text-slate-800 mb-6">Evolución del Mes ({selectedMonth})</h3>
-                                    <div className="h-40 flex items-end gap-1 border-b border-l p-2">
+                                    <h3 className="font-black text-slate-800 mb-6 flex items-center gap-2"><i className="ph-fill ph-list-checks text-emerald-500 text-xl"></i> Cumplimiento de Acciones</h3>
+                                    <div className="space-y-4">
+                                        {habitPercentages.map((habit, i) => (
+                                            <div key={i} className="flex items-center gap-4">
+                                                <div className="w-1/3 text-right text-xs font-black text-slate-600 truncate" title={habit.label}>{habit.label}</div>
+                                                <div className="w-2/3 h-3.5 bg-stone-100 rounded-full overflow-hidden relative">
+                                                    <div className="h-full bg-gradient-to-r from-emerald-300 to-teal-400 rounded-full transition-all duration-1000" style={{ width: `${habit.percent}%` }}></div>
+                                                </div>
+                                                <div className="w-8 text-xs font-black text-emerald-700">{habit.percent}%</div>
+                                            </div>
+                                        ))}
+                                        {thisMonthData.length === 0 && <p className="text-sm text-stone-400">Sin datos en este mes.</p>}
+                                    </div>
+                                </div>
+
+                                {/* EVOLUCIÓN GLOBAL (PUNTUACIÓN DIARIA) */}
+                                <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <h3 className="font-black text-slate-800 flex items-center gap-2"><i className="ph-fill ph-chart-line-up text-rose-500 text-xl"></i> Puntuación General</h3>
+                                        <div className="text-xs font-black text-rose-500 bg-rose-50 px-2 py-1 rounded-lg border border-rose-100">Promedio: {avgScore}</div>
+                                    </div>
+                                    <div className="h-40 flex items-end gap-1.5 border-b border-l border-stone-200 p-2 relative">
                                         {[...thisMonthData].reverse().slice(0, 31).map((d, i) => (
-                                            <div key={i} className="flex-1 bg-orange-200 rounded-t-sm relative group hover:bg-orange-400 transition-colors" style={{ height: `${d.score}%` }}>
+                                            <div key={i} className="flex-1 bg-rose-200 rounded-t-sm relative group hover:bg-rose-400 transition-colors" style={{ height: `${d.score}%` }}>
                                                 <div className="hidden group-hover:block absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] p-1.5 rounded font-bold whitespace-nowrap z-10">
                                                     Día {d.id.slice(-2)}: {d.score} pts
                                                 </div>
@@ -582,6 +698,7 @@
                                     </div>
                                 </div>
                                 
+                                {/* SENSACIONES DEL MES */}
                                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
                                     <h3 className="font-black text-slate-800 mb-6 flex items-center gap-2"><i className="ph-fill ph-brain text-purple-500 text-xl"></i> Sensaciones del Mes</h3>
                                     <div className="flex flex-wrap gap-2">

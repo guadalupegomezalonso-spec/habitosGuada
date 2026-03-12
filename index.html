@@ -20,22 +20,26 @@
 
     <style>
         body { font-family: 'Nunito', sans-serif; }
+        /* Oculta el icono de calendario por defecto en inputs date para estilizarlos mejor */
+        input[type="date"]::-webkit-calendar-picker-indicator,
+        input[type="month"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.6; transition: 0.2s; }
+        input[type="date"]::-webkit-calendar-picker-indicator:hover,
+        input[type="month"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
     </style>
 </head>
-<body class="bg-gradient-to-br from-amber-50 via-orange-50 to-rose-50 min-h-screen text-slate-800">
+<body class="bg-gradient-to-br from-amber-50 via-orange-50 to-rose-50 min-h-screen text-slate-800 pb-12">
     
     <!-- Aquí se cargará la app -->
     <div id="root"></div>
 
     <script type="text/babel" data-type="module">
-        // --- 1. IMPORTACIONES DE FIREBASE ---
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const { useState, useEffect, useMemo } = React;
 
-        // --- 2. TU CONFIGURACIÓN DE FIREBASE ---
+        // --- TU CONFIGURACIÓN DE FIREBASE ---
         const firebaseConfig = {
             apiKey: "AIzaSyAkhWpZAD7dS02e31o47q_IkI_C3cwKvw0",
             authDomain: "habitos-guada.firebaseapp.com",
@@ -50,20 +54,31 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // --- 3. COMPONENTE PRINCIPAL ---
+        // Funciones auxiliares para fechas locales
+        const getLocalYYYYMMDD = () => {
+            const d = new Date();
+            d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+            return d.toISOString().split('T')[0];
+        };
+
         const App = () => {
             const [user, setUser] = useState(null);
             const [activeTab, setActiveTab] = useState('daily');
-            const [date] = useState(new Date().toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
             const [saved, setSaved] = useState(false);
             const [historicalData, setHistoricalData] = useState([]);
             const [loading, setLoading] = useState(true);
 
+            // Nuevos Estados para el control del tiempo
+            const [selectedDate, setSelectedDate] = useState(getLocalYYYYMMDD());
+            const [selectedMonth, setSelectedMonth] = useState(getLocalYYYYMMDD().slice(0, 7)); // Formato YYYY-MM
+
+            // Configuraciones Guardadas (Objetivos y Ciclo)
             const [monthlyGoals, setMonthlyGoals] = useState([
                 { id: 1, habitKey: '', targetDays: '' },
                 { id: 2, habitKey: '', targetDays: '' },
                 { id: 3, habitKey: '', targetDays: '' }
             ]);
+            const [lastPeriodDate, setLastPeriodDate] = useState(''); // El Día 1 de Guada
 
             const habitLabels = {
                 gym: 'Gimnasia', recreation: 'Recreación', enzo: 'Pasear a Enzo', 
@@ -71,11 +86,11 @@
             };
 
             const [habits, setHabits] = useState({ gym: false, recreation: false, enzo: false, inform: false, learn: false, friends: false, nico: false });
-            const [ratings, setRatings] = useState({ sleep: 0, food: 0, water: 0, work: 0, phone: 0 });
-            const [steps, setSteps] = useState('');
-            const [cycleDay, setCycleDay] = useState('');
+            // Se quitó pasos, se consolidó movimiento acá
+            const [ratings, setRatings] = useState({ movement: 0, sleep: 0, food: 0, water: 0, work: 0, phone: 0 });
             const [mood, setMood] = useState(null);
             const [physicalState, setPhysicalState] = useState([]);
+            const [notes, setNotes] = useState(''); 
 
             // Autenticación
             useEffect(() => {
@@ -89,7 +104,7 @@
                 });
             }, []);
 
-            // Carga de Datos
+            // Cargar Historial y Configuraciones
             useEffect(() => {
                 if (!user) return;
                 
@@ -99,53 +114,109 @@
                     data.sort((a, b) => new Date(b.date) - new Date(a.date));
                     setHistoricalData(data);
                     setLoading(false);
-
-                    const todayId = new Date().toISOString().split('T')[0];
-                    const todayData = data.find(d => d.id === todayId);
-                    if (todayData) {
-                        setHabits(todayData.habits || habits);
-                        setRatings(todayData.ratings || ratings);
-                        setSteps(todayData.steps || '');
-                        setCycleDay(todayData.cycleDay || '');
-                        setMood(todayData.mood || null);
-                        setPhysicalState(todayData.physicalState || []);
-                    }
                 });
 
-                // ESTE ERA EL ERROR: Faltaba el último paso de la ruta ('goals')
+                // Cargar Metas
                 const goalsRef = doc(db, 'users', user.uid, 'settings', 'goals');
                 const unsubGoals = onSnapshot(goalsRef, (docSnap) => {
-                    if (docSnap.exists() && docSnap.data().goals) {
-                        setMonthlyGoals(docSnap.data().goals);
-                    }
+                    if (docSnap.exists() && docSnap.data().goals) setMonthlyGoals(docSnap.data().goals);
                 });
 
-                return () => { unsubLogs(); unsubGoals(); };
+                // Cargar Configuración del Ciclo
+                const cycleRef = doc(db, 'users', user.uid, 'settings', 'cycle');
+                const unsubCycle = onSnapshot(cycleRef, (docSnap) => {
+                    if (docSnap.exists() && docSnap.data().lastPeriodDate) setLastPeriodDate(docSnap.data().lastPeriodDate);
+                });
+
+                return () => { unsubLogs(); unsubGoals(); unsubCycle(); };
             }, [user]);
 
-            // Lógica de Puntuación
+            // Cargar datos al cambiar de fecha en la pestaña Diaria
+            useEffect(() => {
+                const dayData = historicalData.find(d => d.id === selectedDate);
+                if (dayData) {
+                    setHabits(dayData.habits || { gym: false, recreation: false, enzo: false, inform: false, learn: false, friends: false, nico: false });
+                    setRatings(dayData.ratings || { movement: 0, sleep: 0, food: 0, water: 0, work: 0, phone: 0 });
+                    setMood(dayData.mood || null);
+                    setPhysicalState(dayData.physicalState || []);
+                    setNotes(dayData.notes || '');
+                } else {
+                    setHabits({ gym: false, recreation: false, enzo: false, inform: false, learn: false, friends: false, nico: false });
+                    setRatings({ movement: 0, sleep: 0, food: 0, water: 0, work: 0, phone: 0 });
+                    setMood(null);
+                    setPhysicalState([]);
+                    setNotes('');
+                }
+            }, [selectedDate, historicalData]);
+
+            // Lógica de Puntuación (Max 100)
             const dailyScore = useMemo(() => {
                 let score = 0;
                 const habitKeys = Object.keys(habits);
                 const completedHabitsCount = habitKeys.filter(k => habits[k]).length;
-                score += (completedHabitsCount / habitKeys.length) * 55; // Hasta 55 pts
-                score += (ratings.food || 0) * 5;  // Hasta 25 pts
-                score += (ratings.water || 0) * 2; // Hasta 10 pts
-                score += (ratings.sleep || 0) * 2; // Hasta 10 pts
+                
+                // 7 Hábitos = 40 puntos máximo
+                score += (completedHabitsCount / habitKeys.length) * 40; 
+                // 6 Ratings (Movimiento, Sueño, Comida, Agua, Trabajo, Celular) = 60 puntos máximo (Cada 1 vale 2 pts)
+                score += (ratings.movement || 0) * 2; 
+                score += (ratings.food || 0) * 2;  
+                score += (ratings.water || 0) * 2; 
+                score += (ratings.sleep || 0) * 2; 
+                score += (ratings.work || 0) * 2; 
+                score += (ratings.phone || 0) * 2; 
+
                 return Math.min(100, Math.round(score));
             }, [habits, ratings]);
+
+            // Cálculo Inteligente del Ciclo
+            const cycleInfo = useMemo(() => {
+                if (!lastPeriodDate) return null;
+                
+                // Usamos T00:00:00 para evitar desfasajes horarios
+                const start = new Date(lastPeriodDate + 'T00:00:00'); 
+                const current = new Date(selectedDate + 'T00:00:00');
+                const diffTime = current - start;
+                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
+
+                if (diffDays < 1) return null; // Fecha seleccionada es previa al Día 1 configurado
+
+                // Para definir la fase, lo ciclamos en 28 días aprox por si la persona olvida cargar su nuevo Día 1
+                const dayInCycle = ((diffDays - 1) % 28) + 1;
+
+                let phase = ""; let desc = ""; let icon = ""; let color = "";
+
+                if (dayInCycle >= 1 && dayInCycle <= 5) {
+                    phase = "Fase Menstrual";
+                    desc = "Energía más baja. Priorizá el descanso, comer calentito y la introspección. Movimiento suave si lo sentís.";
+                    icon = "ph-drop"; color = "text-rose-600 bg-rose-100 border-rose-200";
+                } else if (dayInCycle >= 6 && dayInCycle <= 13) {
+                    phase = "Fase Folicular";
+                    desc = "Energía y creatividad en aumento. Excelente momento para iniciar proyectos, socializar y entrenar fuerte.";
+                    icon = "ph-plant"; color = "text-emerald-600 bg-emerald-100 border-emerald-200";
+                } else if (dayInCycle >= 14 && dayInCycle <= 16) {
+                    phase = "Fase Ovulatoria";
+                    desc = "Pico de energía, confianza y magnetismo. El mejor momento para brillar, comunicarte y salir al mundo.";
+                    icon = "ph-sun"; color = "text-amber-600 bg-amber-100 border-amber-200";
+                } else {
+                    phase = "Fase Lútea";
+                    desc = "Energía en descenso gradual. Foco en los detalles y cierre de tareas. Si sentís SPM o te sentís pesada, bajá un cambio.";
+                    icon = "ph-moon"; color = "text-indigo-600 bg-indigo-100 border-indigo-200";
+                }
+
+                return { absoluteDay: diffDays, phase, desc, icon, color };
+            }, [lastPeriodDate, selectedDate]);
+
 
             // Handlers
             const handleSave = async () => {
                 if (!user) return;
                 setSaved(true);
-                const todayId = new Date().toISOString().split('T')[0];
-                const logDoc = doc(db, 'users', user.uid, 'daily_logs', todayId);
+                const logDoc = doc(db, 'users', user.uid, 'daily_logs', selectedDate);
                 
                 await setDoc(logDoc, {
-                    date: new Date().toISOString(),
+                    date: selectedDate,
                     score: dailyScore,
-                    habits, ratings, steps, cycleDay, mood, physicalState
+                    habits, ratings, mood, physicalState, notes
                 });
                 setTimeout(() => setSaved(false), 2000);
             };
@@ -154,9 +225,16 @@
                 const updated = monthlyGoals.map(g => g.id === id ? { ...g, [field]: value } : g);
                 setMonthlyGoals(updated);
                 if (user) {
-                    // AQUÍ TAMBIÉN: Se corrigió la ruta
                     const goalsRef = doc(db, 'users', user.uid, 'settings', 'goals');
                     await setDoc(goalsRef, { goals: updated }, { merge: true });
+                }
+            };
+
+            const updateLastPeriod = async (value) => {
+                setLastPeriodDate(value);
+                if (user) {
+                    const cycleRef = doc(db, 'users', user.uid, 'settings', 'cycle');
+                    await setDoc(cycleRef, { lastPeriodDate: value }, { merge: true });
                 }
             };
 
@@ -164,6 +242,45 @@
             const setRating = (key, value) => setRatings(prev => ({ ...prev, [key]: value }));
             const togglePhysicalState = (tag) => {
                 setPhysicalState(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+            };
+
+            // Frases Motivacionales Inteligentes
+            const getDailyMotivation = () => {
+                if (dailyScore > 85) return "¡Estás teniendo un día excelente! Mantené esa energía, te lo merecés. 🌟";
+                
+                let lowestRating = { key: '', val: 6 };
+                Object.entries(ratings).forEach(([k, v]) => {
+                    if (v > 0 && v < lowestRating.val) lowestRating = { key: k, val: v };
+                });
+
+                if (lowestRating.val <= 2) {
+                    if (lowestRating.key === 'movement') return "Tu cuerpo necesita moverse un poco para destrabar energía. ¡Probá con estirar 5 minutos o caminar! 🚶‍♀️";
+                    if (lowestRating.key === 'sleep') return "Parece que el descanso no fue el mejor. Tratá de irte a la cama un ratito antes hoy y soltá las pantallas. 💤";
+                    if (lowestRating.key === 'water') return "¡Cuidado con la hidratación! Tomate un vaso de agua ahora mismo, tu cuerpo y cerebro te lo van a agradecer. 💧";
+                    if (lowestRating.key === 'food') return "No te castigues si hoy la comida no fue ideal. En la próxima comida priorizá algo nutritivo que te haga sentir bien. 🥗";
+                    if (lowestRating.key === 'phone') return "Las pantallas nos roban mucha energía. Dejá el celu en otra habitación por un rato y conectá con tu presente. 📵";
+                    if (lowestRating.key === 'work') return "El trabajo estuvo pesado. Acordate de hacer pausas, estirar el cuerpo y respirar profundo. No todo es productividad. 🌿";
+                }
+
+                if (physicalState.includes('Estresada')) return "Noté que te sentís estresada. Dedicá 5 minutos a respirar profundo o hacer algo que te relaje. Tu paz mental es prioridad. 🧘‍♀️";
+                if (mood === 'terrible' || mood === 'meh') return "Hay días más difíciles que otros. Sé amable con vos misma hoy, hacé lo mínimo indispensable y descansá. ❤️";
+                
+                return "Un paso a la vez. No busques la perfección, buscá la constancia. ¡Vos podés con este día! 💪";
+            };
+
+            const getMonthlyFeedback = (avg, best, worst, totalDays) => {
+                if (totalDays === 0) return "Todavía no hay registros en este mes. ¡Seleccioná otro mes o empezá a guardar tus días para ver tu evolución!";
+                
+                let text = `En lo que va del mes registraste ${totalDays} días, con una energía promedio de ${avg}/100. `;
+                
+                if (avg >= 80) text += "¡La verdad que venís excelente! Mantener este equilibrio es un gran logro. ";
+                else if (avg >= 50) text += "Venís con un buen ritmo. Hay días mejores y peores, pero la constancia es lo que cuenta. ";
+                else text += "Ha sido un mes con altibajos, pero lo más valioso es que te estás tomando el tiempo de registrar y conocerte. ";
+                
+                if (best && best !== 'No hay datos suficientes.') text += `Tu punto más fuerte viene siendo '${best}', ¡felicidades por sostenerlo! `;
+                if (worst && worst !== 'No hay datos suficientes.') text += `Como recomendación para lo que queda del mes, podrías poner un poquito más de amor y foco en '${worst}'.`;
+                
+                return text;
             };
 
             // Componentes UI Reutilizables
@@ -205,11 +322,14 @@
                 </div>
             );
 
+            // Nuevas Etiquetas Físicas
             const physicalTags = [
                 { label: 'Llena de energía', icon: '<i class="ph-fill ph-lightning"></i>', type: 'positive' },
-                { label: 'Liviana / Fuerte', icon: '<i class="ph-fill ph-barbell"></i>', type: 'positive' },
+                { label: 'Liviana', icon: '<i class="ph-fill ph-feather"></i>', type: 'positive' },
+                { label: 'Fuerte', icon: '<i class="ph-fill ph-barbell"></i>', type: 'positive' },
                 { label: 'Descansada', icon: '<i class="ph-fill ph-coffee"></i>', type: 'positive' },
                 { label: 'Inspirada', icon: '<i class="ph-fill ph-fire"></i>', type: 'positive' },
+                { label: 'Estresada', icon: '<i class="ph-fill ph-warning-octagon"></i>', type: 'negative' },
                 { label: 'Cansada', icon: '<i class="ph-fill ph-battery-warning"></i>', type: 'negative' },
                 { label: 'Dolorida', icon: '<i class="ph-fill ph-warning-circle"></i>', type: 'negative' },
                 { label: 'Con Hambre', icon: '<i class="ph-fill ph-fork-knife"></i>', type: 'negative' },
@@ -228,18 +348,41 @@
 
             if (loading) return <div className="min-h-screen flex items-center justify-center font-bold text-orange-500"><i className="ph-bold ph-activity animate-pulse text-2xl mr-2"></i> Cargando tu energía...</div>;
 
+            // Datos filtrados para el mes seleccionado
+            const thisMonthData = historicalData.filter(d => d.id.startsWith(selectedMonth));
+            
+            // Cálculos del mes
+            const totalDays = thisMonthData.length;
+            const avgScore = totalDays > 0 ? Math.round(thisMonthData.reduce((a,b)=>a+b.score,0)/totalDays) : 0;
+            const habitCounts = { gym: 0, recreation: 0, enzo: 0, inform: 0, learn: 0, friends: 0, nico: 0 };
+            thisMonthData.forEach(day => { Object.keys(habitCounts).forEach(h => { if(day.habits && day.habits[h]) habitCounts[h]++; }); });
+            const habitPercentages = Object.keys(habitCounts).map(k => ({ key: k, label: habitLabels[k], percent: totalDays > 0 ? Math.round((habitCounts[k] / totalDays) * 100) : 0 })).sort((a,b) => b.percent - a.percent);
+            
+            const bestHabit = habitPercentages.length > 0 && totalDays > 0 ? habitPercentages[0].label : 'No hay datos suficientes.';
+            const worstHabit = habitPercentages.length > 0 && totalDays > 0 ? habitPercentages[habitPercentages.length - 1].label : 'No hay datos suficientes.';
+
             return (
                 <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6">
                     {/* HEADER */}
                     <div className="bg-white/90 backdrop-blur-md p-4 md:p-6 rounded-3xl shadow-sm border border-white flex flex-col md:flex-row justify-between items-center gap-4">
                         <div className="text-center md:text-left">
                             <h1 className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-orange-500 to-rose-500">Mi Energía Diaria</h1>
-                            <p className="text-slate-500 capitalize text-sm font-bold">{date}</p>
+                            {activeTab === 'daily' ? (
+                                <div className="mt-1 flex items-center justify-center md:justify-start gap-2 text-slate-500 font-bold bg-orange-50 px-3 py-1 rounded-lg border border-orange-100">
+                                    <i className="ph-fill ph-calendar text-orange-400"></i>
+                                    <input type="date" value={selectedDate} onChange={e => setSelectedDate(e.target.value)} className="bg-transparent outline-none text-sm cursor-pointer" />
+                                </div>
+                            ) : (
+                                <div className="mt-1 flex items-center justify-center md:justify-start gap-2 text-slate-500 font-bold bg-rose-50 px-3 py-1 rounded-lg border border-rose-100">
+                                    <i className="ph-fill ph-calendar-blank text-rose-400"></i>
+                                    <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="bg-transparent outline-none text-sm cursor-pointer" />
+                                </div>
+                            )}
                         </div>
                         
                         <div className="flex bg-stone-100 p-1.5 rounded-2xl">
                             <button onClick={() => setActiveTab('daily')} className={`flex items-center gap-2 px-6 py-2 rounded-xl font-black transition-all text-sm ${activeTab === 'daily' ? 'bg-white text-orange-500 shadow-sm' : 'text-stone-500'}`}>
-                                <i className="ph-bold ph-calendar"></i> Día
+                                <i className="ph-bold ph-pencil-simple"></i> Día
                             </button>
                             <button onClick={() => setActiveTab('monthly')} className={`flex items-center gap-2 px-6 py-2 rounded-xl font-black transition-all text-sm ${activeTab === 'monthly' ? 'bg-white text-rose-500 shadow-sm' : 'text-stone-500'}`}>
                                 <i className="ph-bold ph-trend-up"></i> Resumen
@@ -248,20 +391,56 @@
 
                         <button onClick={handleSave} className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black transition-all text-sm ${saved ? 'bg-emerald-500 text-white' : 'bg-orange-500 text-white shadow-lg shadow-orange-200 hover:scale-105 active:scale-95'}`}>
                             {saved ? <i className="ph-bold ph-check-circle text-lg"></i> : <i className="ph-bold ph-floppy-disk text-lg"></i>}
-                            {saved ? 'Guardado' : 'Guardar Día'}
+                            {saved ? 'Guardado' : 'Guardar'}
                         </button>
                     </div>
 
                     {activeTab === 'daily' ? (
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            {/* Puntuación e Ingresos */}
+                            
+                            {/* COLUMNA IZQUIERDA */}
                             <div className="space-y-6">
+                                
+                                {/* NUEVO: PANEL DEL CICLO MENSTRUAL */}
+                                <div className={`p-6 rounded-3xl shadow-sm border transition-colors ${cycleInfo ? cycleInfo.color : 'bg-white border-stone-100'}`}>
+                                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
+                                        <h2 className="text-lg font-black flex items-center gap-2 text-slate-800">
+                                            {cycleInfo ? <i className={`ph-fill ${cycleInfo.icon} text-xl`}></i> : <i className="ph-fill ph-calendar-blank text-rose-400 text-xl"></i>}
+                                            {cycleInfo ? cycleInfo.phase : "Ciclo Menstrual"}
+                                        </h2>
+                                        <div className="flex items-center gap-2 text-xs font-bold text-slate-600 bg-white/60 px-3 py-1.5 rounded-xl border border-white">
+                                            <span>Último Día 1:</span>
+                                            <input 
+                                                type="date" 
+                                                value={lastPeriodDate} 
+                                                onChange={(e) => updateLastPeriod(e.target.value)}
+                                                className="bg-transparent outline-none cursor-pointer text-slate-800"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {cycleInfo ? (
+                                        <div>
+                                            <div className="text-3xl font-black text-slate-800 mb-1">Día {cycleInfo.absoluteDay}</div>
+                                            <p className="text-sm font-bold text-slate-700 opacity-90 leading-relaxed">{cycleInfo.desc}</p>
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm font-bold text-slate-500">Seleccioná la fecha de tu última menstruación (Día 1) arriba a la derecha para ver tu fase y predicciones de energía.</p>
+                                    )}
+                                </div>
+
                                 <div className="bg-gradient-to-r from-orange-400 to-rose-400 p-6 rounded-3xl shadow-lg text-white flex justify-between items-center">
                                     <div>
-                                        <h2 className="text-xl font-black flex items-center gap-2 mb-1"><i className="ph-bold ph-activity text-2xl"></i> Puntos de hoy</h2>
-                                        <p className="text-orange-50 text-xs font-bold opacity-80">Base 100 puntos</p>
+                                        <h2 className="text-xl font-black flex items-center gap-2 mb-1"><i className="ph-bold ph-activity text-2xl"></i> Puntos del Día</h2>
+                                        <p className="text-orange-50 text-xs font-bold opacity-80">Se guarda en la fecha: {selectedDate}</p>
                                     </div>
                                     <div className="text-5xl font-black">{dailyScore}</div>
+                                </div>
+
+                                {/* Tarjeta de Motivación Diaria */}
+                                <div className="bg-orange-50 border border-orange-100 p-5 rounded-3xl shadow-sm text-sm font-bold text-orange-900 flex items-start gap-3">
+                                    <i className="ph-fill ph-lightbulb text-2xl text-amber-500 mt-0.5"></i>
+                                    <p className="leading-relaxed">{getDailyMotivation()}</p>
                                 </div>
 
                                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
@@ -278,27 +457,18 @@
                                 </div>
                             </div>
 
-                            {/* Puntuaciones y Bienestar */}
+                            {/* COLUMNA DERECHA */}
                             <div className="space-y-6">
                                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
                                     <h2 className="text-lg font-black text-slate-700 mb-4 flex items-center gap-2"><i className="ph-fill ph-star text-amber-400 text-xl"></i> Calidad (1-5)</h2>
                                     <div className="space-y-3">
+                                        {/* MOVIMIENTO AHORA ESTÁ ACÁ ARRIBA */}
+                                        <RatingRow label="Movimiento" value={ratings.movement} onChange={(v) => setRating('movement', v)} icon='<i class="ph-fill ph-sneaker text-emerald-500"></i>' />
                                         <RatingRow label="Sueño" value={ratings.sleep} onChange={(v) => setRating('sleep', v)} icon='<i class="ph-fill ph-moon text-indigo-500"></i>' />
                                         <RatingRow label="Comida" value={ratings.food} onChange={(v) => setRating('food', v)} icon='<i class="ph-fill ph-fork-knife text-orange-500"></i>' />
                                         <RatingRow label="Agua" value={ratings.water} onChange={(v) => setRating('water', v)} icon='<i class="ph-fill ph-drop text-blue-500"></i>' />
                                         <RatingRow label="Trabajo" value={ratings.work} onChange={(v) => setRating('work', v)} icon='<i class="ph-fill ph-briefcase text-slate-500"></i>' />
                                         <RatingRow label="Celular" value={ratings.phone} onChange={(v) => setRating('phone', v)} icon='<i class="ph-fill ph-device-mobile text-rose-500"></i>' />
-                                    </div>
-                                </div>
-
-                                <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100 grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="text-sm font-black text-slate-600 flex items-center gap-2 mb-2"><i className="ph-fill ph-sneaker text-orange-500 text-lg"></i> Pasos</label>
-                                        <input type="number" value={steps} onChange={e => setSteps(e.target.value)} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-2xl text-lg font-black outline-none focus:border-orange-400 focus:bg-white text-center" placeholder="0" />
-                                    </div>
-                                    <div>
-                                        <label className="text-sm font-black text-slate-600 flex items-center gap-2 mb-2"><i className="ph-fill ph-calendar-blank text-rose-400 text-lg"></i> Ciclo</label>
-                                        <input type="number" value={cycleDay} onChange={e => setCycleDay(e.target.value)} className="w-full p-3 bg-stone-50 border border-stone-200 rounded-2xl text-lg font-black outline-none focus:border-rose-400 focus:bg-white text-center" placeholder="Día" />
                                     </div>
                                 </div>
 
@@ -323,9 +493,27 @@
                                     </div>
                                 </div>
                             </div>
+                            
+                            {/* Diario / Notas del Día (Ocupa ambas columnas) */}
+                            <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100 lg:col-span-2">
+                                <h2 className="text-lg font-black text-slate-700 mb-4 flex items-center gap-2"><i className="ph-fill ph-notebook text-teal-500 text-xl"></i> Diario y Notas</h2>
+                                <textarea 
+                                    value={notes} 
+                                    onChange={e => setNotes(e.target.value)} 
+                                    placeholder="¿Cómo te sentiste hoy? ¿Pasó algo importante que quieras recordar o soltar?"
+                                    className="w-full bg-stone-50 border border-stone-200 rounded-2xl p-4 text-sm font-medium text-slate-700 outline-none focus:border-teal-400 focus:bg-white resize-none h-32 transition-colors"
+                                ></textarea>
+                            </div>
                         </div>
                     ) : (
                         <div className="space-y-6">
+                            
+                            {/* DEVOLUCIÓN MENSUAL INTELIGENTE */}
+                            <div className="bg-rose-50 border border-rose-100 p-6 rounded-3xl shadow-sm">
+                                <h3 className="font-black text-rose-900 mb-3 flex items-center gap-2"><i className="ph-fill ph-magic-wand text-rose-500 text-2xl"></i> Devolución Mensual</h3>
+                                <p className="text-rose-800 text-sm font-bold leading-relaxed">{getMonthlyFeedback(avgScore, bestHabit, worstHabit, totalDays)}</p>
+                            </div>
+
                             {/* OBJETIVOS DEL MES */}
                             <div className="bg-white p-6 rounded-3xl shadow-sm border border-orange-100">
                                 <div className="flex justify-between items-center mb-6">
@@ -333,7 +521,7 @@
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                     {monthlyGoals.map((goal, idx) => {
-                                        const current = goal.habitKey ? historicalData.filter(d => d.habits && d.habits[goal.habitKey]).length : 0;
+                                        const current = goal.habitKey ? thisMonthData.filter(d => d.habits && d.habits[goal.habitKey]).length : 0;
                                         const target = Number(goal.targetDays) || 0;
                                         const pct = target > 0 ? Math.min(100, Math.round((current / target) * 100)) : 0;
                                         return (
@@ -359,39 +547,44 @@
                             </div>
 
                             {/* DASHBOARD CARDS */}
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div className="p-6 rounded-3xl border bg-rose-50 text-rose-700 border-rose-100 shadow-sm">
-                                    <h4 className="text-[10px] font-black uppercase tracking-widest mb-2 opacity-70">PUNTUACIÓN PROMEDIO</h4>
-                                    <div className="text-4xl font-black">{historicalData.length > 0 ? Math.round(historicalData.reduce((a,b)=>a+b.score,0)/historicalData.length) : 0}</div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="p-6 rounded-3xl border bg-rose-50 text-rose-700 border-rose-100 shadow-sm flex items-center justify-between">
+                                    <div>
+                                        <h4 className="text-[10px] font-black uppercase tracking-widest mb-1 opacity-70">PUNTUACIÓN PROMEDIO</h4>
+                                        <div className="text-4xl font-black">{avgScore}</div>
+                                    </div>
+                                    <i className="ph-fill ph-chart-line-up text-4xl opacity-20"></i>
                                 </div>
-                                <div className="p-6 rounded-3xl border bg-amber-50 text-amber-700 border-amber-100 shadow-sm">
-                                    <h4 className="text-[10px] font-black uppercase tracking-widest mb-2 opacity-70">DÍAS REGISTRADOS</h4>
-                                    <div className="text-4xl font-black">{historicalData.length}</div>
-                                </div>
-                                <div className="p-6 rounded-3xl border bg-orange-50 text-orange-700 border-orange-100 shadow-sm">
-                                    <h4 className="text-[10px] font-black uppercase tracking-widest mb-2 opacity-70">DÍA DEL MES</h4>
-                                    <div className="text-4xl font-black">{new Date().getDate()}</div>
+                                <div className="p-6 rounded-3xl border bg-amber-50 text-amber-700 border-amber-100 shadow-sm flex items-center justify-between">
+                                    <div>
+                                        <h4 className="text-[10px] font-black uppercase tracking-widest mb-1 opacity-70">DÍAS REGISTRADOS</h4>
+                                        <div className="text-4xl font-black">{totalDays}</div>
+                                    </div>
+                                    <i className="ph-fill ph-calendar-check text-4xl opacity-20"></i>
                                 </div>
                             </div>
 
                             {/* GRÁFICO Y FRECUENCIA */}
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
-                                    <h3 className="font-black text-slate-800 mb-6">Evolución Diaria</h3>
+                                    <h3 className="font-black text-slate-800 mb-6">Evolución del Mes ({selectedMonth})</h3>
                                     <div className="h-40 flex items-end gap-1 border-b border-l p-2">
-                                        {historicalData.slice(0, 15).reverse().map((d, i) => (
+                                        {[...thisMonthData].reverse().slice(0, 31).map((d, i) => (
                                             <div key={i} className="flex-1 bg-orange-200 rounded-t-sm relative group hover:bg-orange-400 transition-colors" style={{ height: `${d.score}%` }}>
-                                                <div className="hidden group-hover:block absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] p-1 rounded font-bold">{d.score}</div>
+                                                <div className="hidden group-hover:block absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] p-1.5 rounded font-bold whitespace-nowrap z-10">
+                                                    Día {d.id.slice(-2)}: {d.score} pts
+                                                </div>
                                             </div>
                                         ))}
-                                        {historicalData.length === 0 && <p className="text-sm text-stone-400 m-auto">Guarda tu primer día para ver el gráfico.</p>}
+                                        {thisMonthData.length === 0 && <p className="text-sm text-stone-400 m-auto">Sin datos en este mes.</p>}
                                     </div>
                                 </div>
+                                
                                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-stone-100">
-                                    <h3 className="font-black text-slate-800 mb-6 flex items-center gap-2"><i className="ph-fill ph-brain text-purple-500 text-xl"></i> Sensaciones Acumuladas</h3>
+                                    <h3 className="font-black text-slate-800 mb-6 flex items-center gap-2"><i className="ph-fill ph-brain text-purple-500 text-xl"></i> Sensaciones del Mes</h3>
                                     <div className="flex flex-wrap gap-2">
                                         {physicalTags.map(tag => {
-                                            const count = historicalData.filter(d => d.physicalState && d.physicalState.includes(tag.label)).length;
+                                            const count = thisMonthData.filter(d => d.physicalState && d.physicalState.includes(tag.label)).length;
                                             if (count === 0) return null;
                                             return (
                                                 <div key={tag.label} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold ${tag.type === 'positive' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-rose-50 border-rose-100 text-rose-700'}`}>
@@ -399,7 +592,7 @@
                                                 </div>
                                             );
                                         })}
-                                        {historicalData.length === 0 && <p className="text-sm text-stone-400">Aún no hay registros.</p>}
+                                        {thisMonthData.length === 0 && <p className="text-sm text-stone-400">Sin registros de sensaciones.</p>}
                                     </div>
                                 </div>
                             </div>

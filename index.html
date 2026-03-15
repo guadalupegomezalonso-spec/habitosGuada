@@ -482,11 +482,15 @@
                                         <h2 className="text-sm font-black uppercase tracking-widest text-slate-500 flex items-center gap-2">
                                             <i className="ph-fill ph-flower-lotus text-rose-400 text-lg"></i> Tu Ciclo
                                         </h2>
-                                        <div className="flex items-center gap-2 text-xs font-bold text-slate-600 bg-white/60 hover:bg-white/90 transition-colors px-3 py-1.5 rounded-xl border border-white/50 backdrop-blur-sm cursor-pointer relative group shadow-sm">
+                                        <div className="flex items-center gap-2 text-xs font-bold text-slate-600 bg-white/60 hover:bg-white/90 transition-colors px-3 py-1.5 rounded-xl border border-white/50 backdrop-blur-sm shadow-sm">
                                             <i className="ph-bold ph-calendar-plus text-rose-500"></i>
-                                            <span>Día 1: {lastPeriodDate ? lastPeriodDate.split('-').reverse().join('/') : 'Elegir'}</span>
-                                            {/* El input date está oculto sobre el botón, haciéndolo clickeable */}
-                                            <input type="date" value={lastPeriodDate} onChange={(e) => updateLastPeriod(e.target.value)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                                            <span>Día 1:</span>
+                                            <input 
+                                                type="date" 
+                                                value={lastPeriodDate} 
+                                                onChange={(e) => updateLastPeriod(e.target.value)} 
+                                                className="bg-transparent outline-none cursor-pointer text-slate-800 font-black" 
+                                            />
                                         </div>
                                     </div>
 
